@@ -1,0 +1,116 @@
+{
+  "projectType": "cli-tool",
+  "projectName": "Check Image",
+  "projectDescription": "Go-based CLI tool for validating container images against security and operational standards",
+  "theme": "aspen",
+  "primaryColor": "#dcbc88",
+  "lightColor": "#735325",
+  "darkColor": "#393838",
+  "navigation": {
+    "tabs": [
+      {
+        "tab": "Documentation",
+        "groups": [
+          {
+            "group": "Get Started",
+            "pages": [
+              "introduction",
+              "installation",
+              "quickstart"
+            ]
+          },
+          {
+            "group": "Usage",
+            "pages": [
+              "usage/image-reference-syntax",
+              "usage/authentication",
+              "usage/configuration-files",
+              "usage/output-formats"
+            ]
+          },
+          {
+            "group": "Commands",
+            "pages": [
+              "commands/overview",
+              "commands/age",
+              "commands/size",
+              "commands/registry",
+              "commands/ports",
+              "commands/root-user",
+              "commands/healthcheck",
+              "commands/secrets",
+              "commands/entrypoint",
+              "commands/labels",
+              "commands/platform",
+              "commands/all",
+              "commands/version"
+            ]
+          },
+          {
+            "group": "Integrations",
+            "pages": [
+              "integrations/docker",
+              "integrations/github-actions",
+              "integrations/ci-cd"
+            ]
+          },
+          {
+            "group": "Advanced",
+            "pages": [
+              "advanced/policies",
+              "advanced/exit-codes",
+              "advanced/troubleshooting"
+            ]
+          }
+        ]
+      },
+      {
+        "tab": "Development",
+        "groups": [
+          {
+            "group": "Contributing",
+            "pages": [
+              "development/overview",
+              "development/building",
+              "development/testing",
+              "development/architecture"
+            ]
+          },
+          {
+            "group": "Release",
+            "pages": [
+              "development/release-process",
+              "development/ci-cd"
+            ]
+          }
+        ]
+      }
+    ]
+  },
+  "keyFeatures": [
+    "Validates container image age, size, and layer count",
+    "Checks registry trust policies and security configurations",
+    "Detects exposed ports, root users, and missing healthchecks",
+    "Scans for secrets in environment variables and filesystem",
+    "Validates OCI labels and platform compatibility",
+    "Supports multiple image sources: Docker daemon, registries, OCI archives",
+    "Private registry authentication with multiple credential sources",
+    "JSON and text output formats with configurable color modes",
+    "Comprehensive policy configuration via JSON/YAML files",
+    "Available as CLI binary, Docker image, and GitHub Action"
+  ],
+  "publicApiSurface": [
+    "age - Validate image creation date",
+    "size - Validate image size and layer count",
+    "registry - Validate registry trust policy",
+    "ports - Validate exposed ports",
+    "root-user - Validate non-root execution",
+    "healthcheck - Validate healthcheck presence",
+    "secrets - Scan for sensitive data",
+    "entrypoint - Validate startup command",
+    "labels - Validate OCI annotations",
+    "platform - Validate OS/architecture",
+    "all - Run all validation checks",
+    "version - Display version information"
+  ]
+}
