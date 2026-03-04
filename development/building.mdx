@@ -1,0 +1,352 @@
+---
+title: Building from Source
+description: How to clone, build, and install check-image from source
+---
+
+## Prerequisites
+
+- **Go 1.26 or newer**
+- **Git**
+- **pre-commit** (recommended for development)
+- **golangci-lint** (required for pre-commit hooks)
+
+## Quick Start
+
+Clone and install in one step:
+
+```bash
+git clone https://github.com/jarfernandez/check-image.git
+cd check-image
+go install ./cmd/check-image
+```
+
+The binary will be installed to your `GOBIN` directory (usually `$HOME/go/bin`).
+
+## Build Methods
+
+### go install (Recommended for Development)
+
+Installs the binary directly to your `GOBIN` directory:
+
+```bash
+go install ./cmd/check-image
+```
+
+**Behavior:**
+- Binary installed to `$GOBIN/check-image`
+- Version shows as `dev` (no version injection)
+- Automatically available in PATH if `GOBIN` is configured
+
+### go build (Manual Build)
+
+Builds the binary in the current directory:
+
+```bash
+go build -o check-image ./cmd/check-image
+```
+
+**Behavior:**
+- Binary created as `./check-image`
+- Version shows as `dev` (no version injection)
+- Must manually move to PATH if desired
+
+### Production Build (with Version Injection)
+
+For production builds with correct version information:
+
+```bash
+VERSION="v1.0.0"
+COMMIT=$(git rev-parse --short HEAD)
+BUILD_DATE=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+
+go build \
+  -ldflags "-s -w \
+    -X github.com/jarfernandez/check-image/internal/version.Version=$VERSION \
+    -X github.com/jarfernandez/check-image/internal/version.Commit=$COMMIT \
+    -X github.com/jarfernandez/check-image/internal/version.BuildDate=$BUILD_DATE" \
+  -o check-image ./cmd/check-image
+```
+
+**ldflags explanation:**
+- `-s -w`: Strip debug information and symbol table (reduces binary size)
+- `-X`: Inject version variables at build time
+
+Verify the version:
+
+```bash
+./check-image version
+```
+
+## Cross-Compilation
+
+Build for different platforms:
+
+```bash
+# Linux AMD64
+GOOS=linux GOARCH=amd64 go build -o check-image-linux-amd64 ./cmd/check-image
+
+# Linux ARM64
+GOOS=linux GOARCH=arm64 go build -o check-image-linux-arm64 ./cmd/check-image
+
+# macOS AMD64 (Intel)
+GOOS=darwin GOARCH=amd64 go build -o check-image-darwin-amd64 ./cmd/check-image
+
+# macOS ARM64 (Apple Silicon)
+GOOS=darwin GOARCH=arm64 go build -o check-image-darwin-arm64 ./cmd/check-image
+
+# Windows AMD64
+GOOS=windows GOARCH=amd64 go build -o check-image-windows-amd64.exe ./cmd/check-image
+```
+
+## Pre-Commit Hooks
+
+Pre-commit hooks enforce code quality standards before each commit.
+
+### Installation
+
+1. **Install pre-commit framework:**
+
+   ```bash
+   # macOS
+   brew install pre-commit
+
+   # Or with pip
+   pip install pre-commit
+   ```
+
+2. **Install golangci-lint:**
+
+   ```bash
+   # macOS
+   brew install golangci-lint
+
+   # Or with Go
+   go install github.com/golangci/golangci-lint/cmd/golangci-lint@latest
+   ```
+
+3. **(Optional) Install gosec for security scanning:**
+
+   ```bash
+   go install github.com/securego/gosec/v2/cmd/gosec@latest
+   ```
+
+4. **Install the hooks:**
+
+   ```bash
+   pre-commit install
+   pre-commit install --hook-type commit-msg
+   ```
+
+### Usage
+
+Hooks run automatically on `git commit`:
+
+```bash
+git commit -m "feat: Add new feature"
+```
+
+Manually run hooks on all files:
+
+```bash
+pre-commit run --all-files
+```
+
+Run specific hook:
+
+```bash
+pre-commit run go-test-mod
+pre-commit run golangci-lint-mod
+```
+
+Skip hooks in emergencies (not recommended):
+
+```bash
+git commit --no-verify
+```
+
+### What Hooks Check
+
+See `.pre-commit-config.yaml` for the complete configuration.
+
+**File quality:**
+- Trailing whitespace
+- End-of-file newlines
+- Mixed line endings
+- Large files (>1MB)
+
+**Configuration validation:**
+- YAML syntax
+- JSON syntax
+
+**Dockerfile:**
+- hadolint linting
+
+**GitHub Actions:**
+- actionlint validation
+
+**Go code:**
+- `gofmt` formatting
+- `go mod tidy`
+- `go vet` analysis
+- `golangci-lint` linting
+- `go test` with race detection
+
+**Security:**
+- `gosec` scanning (warning only, doesn't block)
+
+**Commit messages:**
+- Conventional Commits format validation
+
+<Warning>
+All mandatory checks must pass before you can commit. Fix any reported issues before proceeding.
+</Warning>
+
+## Version Injection
+
+The version system uses Go's ldflags to inject build metadata.
+
+### How It Works
+
+**Version variables** are defined in `internal/version/version.go`:
+
+```go
+var (
+    Version   = "dev"
+    Commit    = "none"
+    BuildDate = "unknown"
+)
+```
+
+At build time, these are replaced using `-ldflags`:
+
+```bash
+-X github.com/jarfernandez/check-image/internal/version.Version=v0.19.4
+-X github.com/jarfernandez/check-image/internal/version.Commit=a1b2c3d
+-X github.com/jarfernandez/check-image/internal/version.BuildDate=2026-02-18T12:34:56Z
+```
+
+### When Version Injection Happens
+
+**Production builds:**
+- Pre-built binaries from releases (GoReleaser)
+- Docker images (Dockerfile with build args)
+- Homebrew formula (via GoReleaser)
+
+**Development builds:**
+- `go install` → version is `dev`
+- `go build` without ldflags → version is `dev`
+
+### GoReleaser Configuration
+
+See `.goreleaser.yml` for the release build configuration:
+
+```yaml
+ldflags:
+  - -s -w
+  - -X github.com/jarfernandez/check-image/internal/version.Version=v{{.Version}}
+  - -X github.com/jarfernandez/check-image/internal/version.Commit={{.ShortCommit}}
+  - -X github.com/jarfernandez/check-image/internal/version.BuildDate={{.Date}}
+```
+
+**Template variables:**
+- `{{.Version}}`: Release version (e.g., `0.19.4`)
+- `{{.ShortCommit}}`: 7-character commit hash
+- `{{.Date}}`: RFC3339 UTC timestamp
+
+### Docker Build Args
+
+The Dockerfile accepts build arguments:
+
+```bash
+docker build \
+  --build-arg VERSION=v1.0.0 \
+  --build-arg COMMIT=a1b2c3d \
+  --build-arg BUILD_DATE=2026-02-18T12:34:56Z \
+  -t check-image .
+```
+
+Defaults: `VERSION=dev`, `COMMIT=none`, `BUILD_DATE=unknown`
+
+## Dependencies
+
+### Managing Dependencies
+
+Download dependencies:
+
+```bash
+go mod download
+```
+
+Verify dependencies:
+
+```bash
+go mod verify
+```
+
+Clean up unused dependencies:
+
+```bash
+go mod tidy
+```
+
+### Key Dependencies
+
+See `go.mod` for the complete list:
+
+- **github.com/spf13/cobra**: CLI command structure
+- **github.com/google/go-containerregistry**: Container registry operations
+- **github.com/sirupsen/logrus**: Structured logging
+- **github.com/mattn/go-isatty**: Terminal detection
+- **github.com/stretchr/testify**: Test assertions
+- **gopkg.in/yaml.v3**: YAML parsing
+
+<Info>
+The project minimizes external dependencies and prefers the Go standard library where possible.
+</Info>
+
+## Troubleshooting
+
+### Binary Not Found After Install
+
+Ensure `GOBIN` is in your PATH:
+
+```bash
+# Add to ~/.bashrc, ~/.zshrc, or equivalent
+export PATH="$PATH:$(go env GOBIN)"
+
+# Or set GOBIN if not configured
+export GOBIN="$HOME/go/bin"
+export PATH="$PATH:$GOBIN"
+```
+
+### Pre-Commit Hook Failures
+
+Run the specific hook to see detailed errors:
+
+```bash
+pre-commit run golangci-lint-mod --verbose
+pre-commit run go-test-mod --verbose
+```
+
+Fix issues and commit again.
+
+### Module Download Failures
+
+Clear the module cache:
+
+```bash
+go clean -modcache
+go mod download
+```
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Testing" icon="flask" href="/development/testing">
+    Run tests and check coverage
+  </Card>
+  
+  <Card title="Architecture" icon="sitemap" href="/development/architecture">
+    Understand the codebase structure
+  </Card>
+</CardGroup>

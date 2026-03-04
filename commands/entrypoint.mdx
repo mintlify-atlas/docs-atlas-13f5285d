@@ -1,0 +1,202 @@
+---
+title: entrypoint
+description: Validate that the image has an entrypoint defined and uses exec form
+---
+
+## Description
+
+Validates that the container image has a startup command defined (ENTRYPOINT or CMD) and uses exec form. Exec form is preferred over shell form because it avoids an intermediate shell process, ensures signals (e.g. SIGTERM) reach the real process directly, and eliminates unintended shell interpretation.
+
+## Command Syntax
+
+```bash
+check-image entrypoint <image> [flags]
+```
+
+## Flags
+
+| Flag | Type | Default | Description |
+|------|------|---------|-------------|
+| `--allow-shell-form` | bool | `false` | Allow shell form for entrypoint or cmd without failing (optional) |
+| `--output` / `-o` | string | `text` | Output format: `text` or `json` |
+| `--log-level` | string | `info` | Log level (trace, debug, info, warn, error, fatal, panic) |
+
+## How It Works
+
+### Validation Rules
+
+1. **Has Startup Command**: At least one of ENTRYPOINT or CMD must be defined
+2. **Exec Form Check**: By default, shell form causes the check to fail
+
+### Shell Form Detection
+
+The command detects shell form when:
+- The first element is `/bin/sh` or `/bin/bash`
+- The second element is `-c`
+
+**Shell form example** (Docker stores it as):
+```json
+["/bin/sh", "-c", "nginx -g 'daemon off;'"]
+```
+
+**Exec form example** (preferred):
+```json
+["nginx", "-g", "daemon off;"]
+```
+
+### With `--allow-shell-form`
+
+When `--allow-shell-form` is set:
+- Shell form is detected but the check passes
+- Result details include `"shell-form-allowed": true` for transparency
+- `"exec-form": false` indicates shell form was detected
+
+## Usage Examples
+
+### Basic Usage
+
+```bash
+check-image entrypoint nginx:latest
+```
+
+### Allow Shell Form
+
+```bash
+check-image entrypoint myapp:latest --allow-shell-form
+```
+
+### JSON Output
+
+```bash
+check-image entrypoint nginx:latest -o json
+```
+
+### OCI Layout
+
+```bash
+check-image entrypoint oci:/path/to/layout:1.0
+```
+
+### OCI Archive
+
+```bash
+check-image entrypoint oci-archive:/path/to/image.tar:latest
+```
+
+### Docker Archive
+
+```bash
+check-image entrypoint docker-archive:/path/to/image.tar:tag
+```
+
+## Example Output
+
+### Text Format (Success - Exec Form)
+
+```
+✓ Image has a valid exec-form entrypoint
+
+Entrypoint: ["nginx", "-g", "daemon off;"]
+```
+
+### Text Format (Failure - Shell Form)
+
+```
+✗ Image uses shell form for entrypoint or cmd
+
+Entrypoint: ["/bin/sh", "-c", "nginx -g 'daemon off;'"]
+```
+
+### Text Format (Success - Shell Form Allowed)
+
+```
+✓ Image uses shell form but it is allowed
+
+Entrypoint: ["/bin/sh", "-c", "startup.sh"]
+Shell Form Allowed: true
+```
+
+### Text Format (Failure - No Entrypoint)
+
+```
+✗ Image has no entrypoint or cmd defined
+```
+
+### JSON Format (Success)
+
+```json
+{
+  "check": "entrypoint",
+  "image": "nginx:latest",
+  "passed": true,
+  "message": "Image has a valid exec-form entrypoint",
+  "details": {
+    "has-entrypoint": true,
+    "exec-form": true,
+    "entrypoint": ["nginx", "-g", "daemon off;"],
+    "cmd": []
+  }
+}
+```
+
+### JSON Format (Shell Form Detected, Allowed)
+
+```json
+{
+  "check": "entrypoint",
+  "image": "myapp:latest",
+  "passed": true,
+  "message": "Image uses shell form but it is allowed",
+  "details": {
+    "has-entrypoint": true,
+    "exec-form": false,
+    "shell-form-allowed": true,
+    "entrypoint": ["/bin/sh", "-c", "startup.sh"],
+    "cmd": []
+  }
+}
+```
+
+### JSON Format (Failure)
+
+```json
+{
+  "check": "entrypoint",
+  "image": "myapp:latest",
+  "passed": false,
+  "message": "Image has no entrypoint or cmd defined",
+  "details": {
+    "has-entrypoint": false
+  }
+}
+```
+
+## Exit Codes
+
+| Exit Code | Meaning | Example |
+|-----------|---------|---------|----------|
+| 0 | Valid entrypoint | Image has exec-form entrypoint or shell form with `--allow-shell-form` |
+| 1 | Invalid entrypoint | No entrypoint/cmd defined, or shell form without `--allow-shell-form` |
+| 2 | Execution error | Image not found, invalid arguments |
+
+## Why Exec Form is Preferred
+
+**Exec form advantages:**
+- No intermediate shell process consuming resources
+- Signals (SIGTERM, SIGKILL) reach the application process directly
+- No shell interpretation of special characters
+- Faster startup time
+- Correct PID 1 process (important for proper signal handling)
+
+**Shell form disadvantages:**
+- Shell process becomes PID 1, not your application
+- Signals may not propagate correctly
+- Unintended shell expansion of variables and wildcards
+- Additional process overhead
+
+## Notes
+
+- The check examines both `ENTRYPOINT` and `CMD` fields in the image configuration.
+- At least one must be non-empty for the check to pass.
+- When both are present, the check validates that neither uses shell form (unless `--allow-shell-form` is set).
+- Shell form is detected by checking if the command array starts with `["/bin/sh", "-c", ...]` or `["/bin/bash", "-c", ...]`.

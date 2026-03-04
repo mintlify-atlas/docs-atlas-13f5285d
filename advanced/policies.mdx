@@ -1,0 +1,471 @@
+---
+title: Policy Configuration
+description: Deep dive into policy files for registry validation, secrets detection, and label requirements
+---
+
+## Overview
+
+Check Image uses policy files to define validation rules for registries, secrets, and labels. Policy files support both JSON and YAML formats, can be read from files or stdin, and can be embedded inline in configuration files.
+
+## Policy File Types
+
+### Registry Policy
+
+Defines which container registries are trusted. Supports two modes: allowlist (trusted-registries) or blocklist (excluded-registries).
+
+#### Allowlist Mode (Trusted Registries)
+
+Only registries in the `trusted-registries` list are allowed:
+
+<CodeGroup>
+```yaml YAML Format
+trusted-registries:
+  - index.docker.io
+  - ghcr.io
+  - gcr.io
+  - quay.io
+  - public.ecr.aws
+  - mcr.microsoft.com
+  - registry.redhat.io
+  - registry.gitlab.com
+```
+
+```json JSON Format
+{
+  "trusted-registries": [
+    "index.docker.io",
+    "ghcr.io",
+    "gcr.io",
+    "quay.io",
+    "public.ecr.aws",
+    "mcr.microsoft.com",
+    "registry.redhat.io",
+    "registry.gitlab.com"
+  ]
+}
+```
+</CodeGroup>
+
+#### Blocklist Mode (Excluded Registries)
+
+All registries except those in the `excluded-registries` list are allowed:
+
+<CodeGroup>
+```yaml YAML Format
+excluded-registries:
+  - insecure-registry.local
+  - untrusted-mirror.example.com
+```
+
+```json JSON Format
+{
+  "excluded-registries": [
+    "insecure-registry.local",
+    "untrusted-mirror.example.com"
+  ]
+}
+```
+</CodeGroup>
+
+<Warning>
+You must specify **either** `trusted-registries` or `excluded-registries`, not both. The policy file will fail validation if both are present.
+</Warning>
+
+#### Usage Examples
+
+```bash
+# Using file path
+check-image registry nginx:latest --registry-policy config/registry-policy.yaml
+
+# Using stdin (JSON)
+echo '{"trusted-registries": ["docker.io", "ghcr.io"]}' | \
+  check-image registry nginx:latest --registry-policy -
+
+# Using stdin (YAML)
+cat <<EOF | check-image registry nginx:latest --registry-policy -
+trusted-registries:
+  - docker.io
+  - ghcr.io
+EOF
+```
+
+### Secrets Policy
+
+Defines rules for detecting sensitive data in container images, including environment variables and files.
+
+#### Policy Structure
+
+<CodeGroup>
+```yaml YAML Format
+check-env-vars: true
+check-files: true
+
+excluded-paths:
+  - /usr/share/doc/**
+  - /usr/share/examples/**
+  - /usr/share/man/**
+
+excluded-env-vars:
+  - PUBLIC_KEY
+  - SSH_PUBLIC_KEY
+
+custom-env-patterns: []
+custom-file-patterns: []
+```
+
+```json JSON Format
+{
+  "check-env-vars": true,
+  "check-files": true,
+  "excluded-paths": [
+    "/usr/share/doc/**",
+    "/usr/share/examples/**",
+    "/usr/share/man/**"
+  ],
+  "excluded-env-vars": [
+    "PUBLIC_KEY",
+    "SSH_PUBLIC_KEY"
+  ],
+  "custom-env-patterns": [],
+  "custom-file-patterns": []
+}
+```
+</CodeGroup>
+
+#### Configuration Fields
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `check-env-vars` | boolean | Enable environment variable scanning |
+| `check-files` | boolean | Enable file system scanning |
+| `excluded-paths` | array | File paths to exclude (supports glob patterns like `**`) |
+| `excluded-env-vars` | array | Environment variable names to exclude |
+| `custom-env-patterns` | array | Additional keywords for environment variable detection |
+| `custom-file-patterns` | array | Additional file patterns to detect |
+
+#### Default Detection Patterns
+
+**Environment Variables** (case-insensitive keywords):
+- `password`, `passwd`
+- `secret`, `token`
+- `key`, `credential`
+- `auth`, `api`
+
+**Files** (built-in patterns):
+- SSH keys: `id_rsa`, `id_dsa`, `id_ecdsa`, `id_ed25519`, `*.ppk`
+- Cloud credentials: `.aws/credentials`, `.kube/config`
+- Private keys: `*.key`
+- Password files: `/etc/shadow`, `.pgpass`, `.my.cnf`, `.netrc`
+- Other: `.npmrc`, `.git-credentials`, `secrets.json`, `secrets.yaml`, `wallet.dat`
+
+#### Usage Examples
+
+```bash
+# Using file path
+check-image secrets nginx:latest --secrets-policy config/secrets-policy.yaml
+
+# Skip environment variable checks
+check-image secrets nginx:latest \
+  --secrets-policy config/secrets-policy.yaml \
+  --skip-env-vars
+
+# Skip file system checks
+check-image secrets nginx:latest \
+  --secrets-policy config/secrets-policy.yaml \
+  --skip-files
+
+# Using stdin with dynamic configuration
+envsubst < secrets-policy-template.yaml | \
+  check-image secrets nginx:latest --secrets-policy -
+```
+
+### Labels Policy
+
+Defines required OCI labels (annotations) and their validation rules.
+
+#### Policy Structure
+
+<CodeGroup>
+```yaml YAML Format
+required-labels:
+  # Existence check - label must be present with any value
+  - name: "maintainer"
+
+  # Pattern match - value must match semantic versioning regex
+  - name: "org.opencontainers.image.version"
+    pattern: "^v?\\d+\\.\\d+\\.\\d+(-[a-zA-Z0-9.]+)?(\\+[a-zA-Z0-9.]+)?$"
+
+  # Exact value match - value must exactly match the specified string
+  - name: "org.opencontainers.image.vendor"
+    value: "MyCompany"
+
+  # Additional recommended OCI labels
+  - name: "org.opencontainers.image.source"
+  - name: "org.opencontainers.image.created"
+    pattern: "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}Z$"
+```
+
+```json JSON Format
+{
+  "required-labels": [
+    {
+      "name": "maintainer"
+    },
+    {
+      "name": "org.opencontainers.image.version",
+      "pattern": "^v?\\d+\\.\\d+\\.\\d+(-[a-zA-Z0-9.]+)?(\\+[a-zA-Z0-9.]+)?$"
+    },
+    {
+      "name": "org.opencontainers.image.vendor",
+      "value": "MyCompany"
+    },
+    {
+      "name": "org.opencontainers.image.source"
+    },
+    {
+      "name": "org.opencontainers.image.created",
+      "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}Z$"
+    }
+  ]
+}
+```
+</CodeGroup>
+
+#### Validation Modes
+
+**1. Existence Check**
+
+Label must be present with any non-empty value:
+
+```yaml
+- name: "maintainer"
+```
+
+**2. Exact Value Match**
+
+Label value must exactly match the specified string:
+
+```yaml
+- name: "org.opencontainers.image.vendor"
+  value: "MyCompany"
+```
+
+**3. Pattern Match**
+
+Label value must match the regular expression:
+
+```yaml
+- name: "org.opencontainers.image.version"
+  pattern: "^v?\\d+\\.\\d+\\.\\d+$"
+```
+
+<Note>
+Regular expressions use Go's `regexp` package syntax. Remember to escape backslashes in JSON/YAML strings.
+</Note>
+
+#### Usage Examples
+
+```bash
+# Using file path
+check-image labels nginx:latest --labels-policy config/labels-policy.json
+
+# Generate policy dynamically
+jq -n '{"required-labels": [{"name": "maintainer"}]}' | \
+  check-image labels nginx:latest --labels-policy -
+```
+
+## JSON vs YAML Formats
+
+All policy files support both JSON and YAML formats with automatic detection:
+
+### File-Based Detection
+
+Format is determined by file extension:
+- `.yaml`, `.yml` → YAML parser
+- All other extensions → JSON parser
+
+### Stdin Auto-Detection
+
+When reading from stdin (`-`), format is detected by content:
+- Starts with `{` or `[` → JSON
+- Otherwise → YAML
+
+**Size limit**: 10MB maximum for stdin input.
+
+## Inline Policy Embedding
+
+Policy objects can be embedded directly in the `all` command configuration file instead of referencing external files:
+
+```yaml
+checks:
+  registry:
+    registry-policy:
+      trusted-registries:
+        - docker.io
+        - ghcr.io
+  secrets:
+    secrets-policy:
+      check-env-vars: true
+      check-files: true
+      excluded-paths:
+        - /usr/share/**
+  labels:
+    labels-policy:
+      required-labels:
+        - name: "maintainer"
+        - name: "org.opencontainers.image.version"
+          pattern: "^v?\\d+\\.\\d+\\.\\d+$"
+```
+
+**Benefits**:
+- Single configuration file
+- Easier version control
+- Simpler deployment
+- Mix inline and file references as needed
+
+See the [All Command](/commands/all) documentation for complete examples.
+
+## Stdin Input Support
+
+All policy files support reading from standard input using `-` as the path. This enables dynamic configuration from pipelines:
+
+### Registry Policy from Stdin
+
+```bash
+# JSON
+echo '{"trusted-registries": ["docker.io", "ghcr.io"]}' | \
+  check-image registry nginx:latest --registry-policy -
+
+# YAML
+cat <<EOF | check-image registry nginx:latest --registry-policy -
+trusted-registries:
+  - docker.io
+  - ghcr.io
+EOF
+```
+
+### Secrets Policy from Stdin
+
+```bash
+# From file through pipe
+cat secrets-policy.yaml | check-image secrets nginx:latest --secrets-policy -
+
+# From environment variable substitution
+envsubst < secrets-template.yaml | check-image secrets nginx:latest --secrets-policy -
+```
+
+### Labels Policy from Stdin
+
+```bash
+# Generate with jq
+jq -n '{
+  "required-labels": [
+    {"name": "maintainer"},
+    {"name": "version", "pattern": "^v?[0-9]+\\.[0-9]+\\.[0-9]+$"}
+  ]
+}' | check-image labels nginx:latest --labels-policy -
+```
+
+### All Command Config from Stdin
+
+```bash
+cat config/config.yaml | check-image all nginx:latest --config -
+```
+
+<Warning>
+`--password-stdin` cannot be combined with policy stdin input (`--registry-policy -`, `--config -`, etc.) because both consume stdin. Use environment variables or credential files for authentication when using stdin for policies.
+</Warning>
+
+## Validation Rules
+
+### Registry Policy Validation
+
+1. Must specify either `trusted-registries` or `excluded-registries`
+2. Cannot specify both modes simultaneously
+3. Empty lists are not allowed
+4. Registry names are matched exactly (case-sensitive)
+
+### Secrets Policy Validation
+
+1. At least one of `check-env-vars` or `check-files` must be true
+2. Glob patterns in `excluded-paths` support `*` (any characters) and `**` (directory recursion)
+3. Environment variable names are case-sensitive in exclusions
+4. Pattern matching is case-insensitive for detection
+
+### Labels Policy Validation
+
+1. Each required label must have a `name` field
+2. Cannot specify both `value` and `pattern` for the same label
+3. Regular expressions are validated at runtime
+4. Label names follow OCI annotation conventions (reverse domain notation recommended)
+
+## Common Patterns
+
+### Multi-Registry Organization
+
+```yaml
+trusted-registries:
+  - docker.io              # Docker Hub
+  - ghcr.io               # GitHub Container Registry
+  - gcr.io                # Google Container Registry
+  - 123456789012.dkr.ecr.us-east-1.amazonaws.com  # AWS ECR
+  - registry.company.internal  # Private registry
+```
+
+### Strict Secrets Detection
+
+```yaml
+check-env-vars: true
+check-files: true
+excluded-paths: []       # No exclusions
+excluded-env-vars: []    # No exclusions
+custom-env-patterns:
+  - database
+  - connection
+custom-file-patterns:
+  - "*.pem"
+  - "*.crt"
+```
+
+### Lenient Secrets Detection for Development
+
+```yaml
+check-env-vars: true
+check-files: false       # Skip file scanning
+excluded-paths:
+  - /usr/**
+  - /var/**
+excluded-env-vars:
+  - DEV_TOKEN
+  - TEST_API_KEY
+  - PUBLIC_KEY
+```
+
+### Complete OCI Label Set
+
+```yaml
+required-labels:
+  - name: "org.opencontainers.image.created"
+    pattern: "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}Z$"
+  - name: "org.opencontainers.image.authors"
+  - name: "org.opencontainers.image.url"
+  - name: "org.opencontainers.image.documentation"
+  - name: "org.opencontainers.image.source"
+  - name: "org.opencontainers.image.version"
+    pattern: "^v?\\d+\\.\\d+\\.\\d+(-[a-zA-Z0-9.]+)?(\\+[a-zA-Z0-9.]+)?$"
+  - name: "org.opencontainers.image.vendor"
+  - name: "org.opencontainers.image.licenses"
+  - name: "org.opencontainers.image.title"
+  - name: "org.opencontainers.image.description"
+```
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Exit Codes" icon="circle-exclamation" href="/advanced/exit-codes">
+    Understand exit code behavior and precedence
+  </Card>
+  <Card title="Troubleshooting" icon="wrench" href="/advanced/troubleshooting">
+    Common issues and solutions
+  </Card>
+</CardGroup>

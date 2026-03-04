@@ -1,0 +1,356 @@
+---
+title: Private Registry Authentication
+description: Configure credentials for accessing private container registries
+---
+
+Check Image supports multiple methods for authenticating with private container registries. Credentials can be provided via CLI flags, environment variables, or Docker's credential system.
+
+## Credential Precedence
+
+When multiple credential sources are available, Check Image follows this priority order:
+
+<Steps>
+  <Step title="CLI Flags (Highest Priority)">
+    Credentials provided via `--username`, `--password`, or `--password-stdin` flags.
+  </Step>
+  
+  <Step title="Environment Variables">
+    Credentials set in `CHECK_IMAGE_USERNAME` and `CHECK_IMAGE_PASSWORD` environment variables.
+  </Step>
+  
+  <Step title="Docker Config (Lowest Priority)">
+    Credentials from `~/.docker/config.json` and Docker credential helpers.
+  </Step>
+</Steps>
+
+<Info>
+  The same credentials are applied to all registry requests in a single invocation. For per-registry credentials, use Docker credential helpers.
+</Info>
+
+## Authentication Methods
+
+### CLI Flags
+
+Provide credentials directly on the command line using flags.
+
+<CodeGroup>
+```bash Using --password flag
+check-image size my-registry.example.com/private-image:latest \
+  --username myuser \
+  --password mypassword
+```
+
+```bash Using --password-stdin (Recommended)
+echo "mytoken" | check-image age my-registry.example.com/private-image:latest \
+  --username myuser \
+  --password-stdin
+```
+
+```bash Reading password from file
+check-image root-user my-registry.example.com/private-image:latest \
+  --username myuser \
+  --password-stdin < ~/.secrets/registry-token
+```
+</CodeGroup>
+
+<Warning>
+  **Security Risk**: The `--password` flag makes your password visible in the process list. Use `--password-stdin` or environment variables instead.
+</Warning>
+
+#### Flag Details
+
+<ParamField path="--username" type="string">
+  Registry username for authentication. Can also be set via `CHECK_IMAGE_USERNAME` environment variable.
+</ParamField>
+
+<ParamField path="--password" type="string">
+  Registry password or token for authentication. Can also be set via `CHECK_IMAGE_PASSWORD` environment variable.
+  
+  <Warning>Visible in process list. Prefer `--password-stdin` or environment variables.</Warning>
+</ParamField>
+
+<ParamField path="--password-stdin" type="boolean">
+  Read registry password from stdin. Cannot be combined with other flags that also read from stdin (`--config -`, `--allowed-ports @-`, etc.).
+</ParamField>
+
+### Environment Variables
+
+Set credentials via environment variables for use in scripts and CI/CD pipelines.
+
+<CodeGroup>
+```bash Setting environment variables
+export CHECK_IMAGE_USERNAME=myuser
+export CHECK_IMAGE_PASSWORD=mypassword
+check-image healthcheck my-registry.example.com/private-image:latest
+```
+
+```bash Inline environment variables
+CHECK_IMAGE_USERNAME=myuser CHECK_IMAGE_PASSWORD=mytoken \
+  check-image secrets my-registry.example.com/private-image:latest
+```
+
+```bash CI/CD pipeline (GitHub Actions)
+- name: Validate image
+  env:
+    CHECK_IMAGE_USERNAME: ${{ secrets.REGISTRY_USERNAME }}
+    CHECK_IMAGE_PASSWORD: ${{ secrets.REGISTRY_PASSWORD }}
+  run: check-image all ghcr.io/myorg/app:${{ github.sha }}
+```
+</CodeGroup>
+
+<Tip>
+  Environment variables are ideal for CI/CD pipelines where credentials are stored as secrets.
+</Tip>
+
+### Docker Config File
+
+Check Image automatically uses credentials from Docker's configuration file and credential helpers.
+
+<CodeGroup>
+```bash Using docker login
+docker login my-registry.example.com
+check-image secrets my-registry.example.com/private-image:latest
+```
+
+```bash Using podman
+podman login my-registry.example.com
+check-image age my-registry.example.com/private-image:latest
+```
+</CodeGroup>
+
+<Info>
+  This method requires no additional flags or environment variables. Check Image uses the `authn.DefaultKeychain` from go-containerregistry, which reads `~/.docker/config.json` and invokes credential helpers automatically.
+</Info>
+
+## Registry-Specific Examples
+
+### GitHub Container Registry (GHCR)
+
+GitHub Container Registry requires a Personal Access Token (PAT) with the `read:packages` scope.
+
+<CodeGroup>
+```bash With --password-stdin
+echo "$GITHUB_TOKEN" | check-image age ghcr.io/myorg/app:latest \
+  --username myusername \
+  --password-stdin
+```
+
+```bash With environment variables
+export CHECK_IMAGE_USERNAME=myusername
+export CHECK_IMAGE_PASSWORD=$GITHUB_TOKEN
+check-image size ghcr.io/myorg/app:latest --max-size 200
+```
+
+```bash With docker login
+echo "$GITHUB_TOKEN" | docker login ghcr.io -u myusername --password-stdin
+check-image all ghcr.io/myorg/app:latest
+```
+</CodeGroup>
+
+<Note>
+  For GitHub Actions workflows, use the `GITHUB_TOKEN` secret which is automatically available.
+</Note>
+
+### Docker Hub
+
+Docker Hub private repositories require a Docker Hub username and password or access token.
+
+<CodeGroup>
+```bash With flags
+check-image age docker.io/myorg/private-app:latest \
+  --username mydockerhubuser \
+  --password-stdin < ~/.docker-token
+```
+
+```bash With docker login
+docker login -u mydockerhubuser
+check-image root-user myorg/private-app:latest
+```
+</CodeGroup>
+
+### Amazon ECR
+
+Amazon ECR requires an authorization token obtained via the AWS CLI.
+
+<CodeGroup>
+```bash Generate token and authenticate
+aws ecr get-login-password --region us-east-1 | \
+  docker login --username AWS --password-stdin 123456789012.dkr.ecr.us-east-1.amazonaws.com
+
+check-image age 123456789012.dkr.ecr.us-east-1.amazonaws.com/my-app:latest
+```
+
+```bash Using credential helper (recommended)
+# Install amazon-ecr-credential-helper
+# Configure ~/.docker/config.json with:
+# {
+#   "credHelpers": {
+#     "123456789012.dkr.ecr.us-east-1.amazonaws.com": "ecr-login"
+#   }
+# }
+
+check-image size 123456789012.dkr.ecr.us-east-1.amazonaws.com/my-app:latest --max-size 500
+```
+</CodeGroup>
+
+### Google Container Registry (GCR)
+
+GCR requires a service account key or OAuth token.
+
+<CodeGroup>
+```bash With service account key
+cat key.json | docker login -u _json_key --password-stdin gcr.io
+check-image age gcr.io/my-project/my-app:latest
+```
+
+```bash Using gcloud credential helper
+# Configure Docker credential helper
+gcloud auth configure-docker
+
+check-image healthcheck gcr.io/my-project/my-app:latest
+```
+</CodeGroup>
+
+### Azure Container Registry (ACR)
+
+ACR requires Azure credentials.
+
+<CodeGroup>
+```bash With Azure CLI
+az acr login --name myregistry
+check-image age myregistry.azurecr.io/my-app:latest
+```
+
+```bash With admin credentials
+check-image size myregistry.azurecr.io/my-app:latest \
+  --username myregistry \
+  --password-stdin < ~/acr-password.txt
+```
+</CodeGroup>
+
+## Validation Rules
+
+Check Image enforces several validation rules for credentials:
+
+<AccordionGroup>
+  <Accordion title="Mutual Exclusivity">
+    `--password` and `--password-stdin` are mutually exclusive. You cannot use both in the same command.
+    
+    ```bash Error
+    check-image age nginx:latest --username user --password pass --password-stdin
+    # Error: --password and --password-stdin are mutually exclusive
+    ```
+  </Accordion>
+  
+  <Accordion title="Username Required with Password">
+    If you provide a password (via any method), you must also provide a username.
+    
+    ```bash Error
+    export CHECK_IMAGE_PASSWORD=mytoken
+    check-image age ghcr.io/myorg/app:latest
+    # Error: registry username required when password is set
+    ```
+  </Accordion>
+  
+  <Accordion title="Password Required with Username">
+    If you provide a username (via any method), you must also provide a password.
+    
+    ```bash Error
+    check-image age ghcr.io/myorg/app:latest --username myuser
+    # Error: registry password required when username is set
+    ```
+  </Accordion>
+  
+  <Accordion title="Stdin Conflict">
+    `--password-stdin` cannot be combined with other flags that read from stdin (`--config -`, `--allowed-ports @-`, `--registry-policy -`, etc.).
+    
+    ```bash Error
+    cat config.json | check-image all nginx:latest --config - --password-stdin
+    # Error: multiple flags attempting to read from stdin
+    ```
+  </Accordion>
+</AccordionGroup>
+
+## Security Best Practices
+
+<CardGroup cols={2}>
+  <Card title="Use --password-stdin" icon="lock">
+    Avoid putting passwords in command-line arguments. Use `--password-stdin` or environment variables.
+  </Card>
+  
+  <Card title="Store secrets securely" icon="vault">
+    Use secret management systems (GitHub Secrets, AWS Secrets Manager, HashiCorp Vault) in CI/CD pipelines.
+  </Card>
+  
+  <Card title="Use credential helpers" icon="key">
+    Configure Docker credential helpers for automatic per-registry authentication.
+  </Card>
+  
+  <Card title="Rotate tokens regularly" icon="arrows-rotate">
+    Use time-limited access tokens instead of long-lived passwords, and rotate them regularly.
+  </Card>
+</CardGroup>
+
+## Troubleshooting
+
+<AccordionGroup>
+  <Accordion title="Authentication Fails with Docker Config">
+    **Problem**: Check Image cannot authenticate even though `docker pull` works.
+    
+    **Solution**: Ensure the Docker credential helper is correctly configured in `~/.docker/config.json`. Check Image uses the same credential system as Docker.
+    
+    ```bash Verify credentials
+    cat ~/.docker/config.json
+    docker login my-registry.example.com
+    ```
+  </Accordion>
+  
+  <Accordion title="Environment Variables Not Working">
+    **Problem**: Environment variables are set but authentication still fails.
+    
+    **Solution**: Verify both `CHECK_IMAGE_USERNAME` and `CHECK_IMAGE_PASSWORD` are set. Missing one will cause an error.
+    
+    ```bash Check variables
+    echo $CHECK_IMAGE_USERNAME
+    echo $CHECK_IMAGE_PASSWORD
+    ```
+  </Accordion>
+  
+  <Accordion title="Password Visible in Process List">
+    **Problem**: Password is visible when running `ps aux`.
+    
+    **Solution**: Use `--password-stdin` instead of `--password` to read the password from stdin.
+    
+    ```bash Secure approach
+    echo "$PASSWORD" | check-image age image:latest --username user --password-stdin
+    ```
+  </Accordion>
+  
+  <Accordion title="Rate Limiting on Docker Hub">
+    **Problem**: Pulling from Docker Hub returns rate limit errors.
+    
+    **Solution**: Authenticate with your Docker Hub account to get higher rate limits.
+    
+    ```bash Authenticate
+    docker login
+    check-image age nginx:latest
+    ```
+  </Accordion>
+</AccordionGroup>
+
+## Related Topics
+
+<CardGroup cols={2}>
+  <Card title="Image Reference Syntax" icon="image" href="/usage/image-reference-syntax">
+    Learn about transport prefixes and image references
+  </Card>
+  <Card title="Configuration Files" icon="file-code" href="/usage/configuration-files">
+    Understand policy and configuration file formats
+  </Card>
+  <Card title="GitHub Action" icon="github" href="/integrations/github-action">
+    Use Check Image in GitHub Actions workflows
+  </Card>
+  <Card title="CI/CD Integration" icon="circle-nodes" href="/integrations/ci-cd">
+    Integrate Check Image into your CI/CD pipeline
+  </Card>
+</CardGroup>

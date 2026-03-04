@@ -1,0 +1,318 @@
+---
+title: registry
+description: Validate that the image registry is trusted
+---
+
+The `registry` command validates that a container image comes from a trusted registry based on a policy file. This ensures images are pulled only from approved sources.
+
+## Usage
+
+```bash
+check-image registry <image> --registry-policy <file>
+```
+
+## Description
+
+The `registry` command extracts the registry hostname from the image reference and validates it against a policy file. The policy can specify either trusted registries (allowlist) or excluded registries (blocklist).
+
+This check helps:
+- Enforce image provenance policies
+- Prevent unauthorized image sources
+- Ensure images come from approved registries
+- Maintain supply chain security
+- Comply with organizational security policies
+
+<Info>Registry validation is automatically skipped for non-registry transports (OCI layout, archives)</Info>
+
+## Flags
+
+<ParamField path="--registry-policy" type="string" required>
+  Path to registry policy file (JSON or YAML format). Use `-` to read from stdin.
+  
+  Short form: `-r`
+</ParamField>
+
+<ParamField path="--output" type="string" default="text">
+  Output format: `text` or `json`
+  
+  Short form: `-o`
+</ParamField>
+
+<ParamField path="--color" type="string" default="auto">
+  Color output mode: `auto`, `always`, `never`
+</ParamField>
+
+<ParamField path="--log-level" type="string" default="info">
+  Set log level: trace, debug, info, warn, error, fatal, panic
+</ParamField>
+
+## Policy File Format
+
+The policy file must specify either `trusted-registries` (allowlist) or `excluded-registries` (blocklist), but not both.
+
+### Allowlist Mode (Trusted Registries)
+
+Only registries in the list are allowed:
+
+<CodeGroup>
+```yaml YAML
+trusted-registries:
+  - docker.io
+  - ghcr.io
+  - gcr.io
+  - registry.example.com
+```
+
+```json JSON
+{
+  "trusted-registries": [
+    "docker.io",
+    "ghcr.io",
+    "gcr.io",
+    "registry.example.com"
+  ]
+}
+```
+</CodeGroup>
+
+### Blocklist Mode (Excluded Registries)
+
+All registries except those in the list are allowed:
+
+<CodeGroup>
+```yaml YAML
+excluded-registries:
+  - untrusted.example.com
+  - malicious-registry.net
+```
+
+```json JSON
+{
+  "excluded-registries": [
+    "untrusted.example.com",
+    "malicious-registry.net"
+  ]
+}
+```
+</CodeGroup>
+
+## Examples
+
+### Validate with policy file
+
+```bash
+check-image registry nginx:latest --registry-policy registry-policy.json
+```
+
+### Validate fully qualified image
+
+```bash
+check-image registry docker.io/library/nginx:latest --registry-policy registry-policy.yaml
+```
+
+### Policy from stdin
+
+```bash
+echo '{"trusted-registries": ["docker.io", "ghcr.io"]}' | \
+  check-image registry nginx:latest --registry-policy -
+```
+
+### Dynamic policy generation
+
+```bash
+cat registry-policy.yaml | \
+  check-image registry myapp:latest --registry-policy -
+```
+
+### JSON output
+
+```bash
+check-image registry nginx:latest --registry-policy policy.json -o json
+```
+
+## Output
+
+### Text Format
+
+When validation passes:
+```
+✓ Registry docker.io is trusted
+
+Details:
+  Registry: docker.io
+```
+
+When validation fails:
+```
+✗ Registry untrusted.example.com is not trusted
+
+Details:
+  Registry: untrusted.example.com
+```
+
+When skipped (non-registry transport):
+```
+✓ Registry validation skipped (not applicable for this transport)
+```
+
+### JSON Format
+
+```json
+{
+  "check": "registry",
+  "image": "nginx:latest",
+  "passed": true,
+  "message": "Registry docker.io is trusted",
+  "details": {
+    "registry": "docker.io"
+  }
+}
+```
+
+Skipped (non-registry):
+```json
+{
+  "check": "registry",
+  "image": "oci:/path/to/layout:1.0",
+  "passed": true,
+  "message": "Registry validation skipped (not applicable for this transport)",
+  "details": {
+    "skipped": true
+  }
+}
+```
+
+## Exit Codes
+
+| Code | Meaning | Example |
+|------|---------|------|
+| 0 | Registry is trusted or check skipped | docker.io with trusted-registries containing docker.io |
+| 1 | Registry is not trusted | untrusted.com with trusted-registries not containing untrusted.com |
+| 2 | Execution error | Invalid policy file, missing registry-policy flag |
+
+## Configuration
+
+When using the `all` command, configure registry validation in your config file:
+
+<CodeGroup>
+```yaml YAML
+checks:
+  registry:
+    registry-policy: config/registry-policy.yaml
+```
+
+```json JSON
+{
+  "checks": {
+    "registry": {
+      "registry-policy": "config/registry-policy.json"
+    }
+  }
+}
+```
+</CodeGroup>
+
+### Inline Policy
+
+You can embed the policy directly in the all-checks config:
+
+<CodeGroup>
+```yaml YAML
+checks:
+  registry:
+    registry-policy:
+      trusted-registries:
+        - docker.io
+        - ghcr.io
+        - gcr.io
+```
+
+```json JSON
+{
+  "checks": {
+    "registry": {
+      "registry-policy": {
+        "trusted-registries": [
+          "docker.io",
+          "ghcr.io",
+          "gcr.io"
+        ]
+      }
+    }
+  }
+}
+```
+</CodeGroup>
+
+## Implementation Details
+
+- Extracts registry hostname from image reference
+- Default registry is `docker.io` for images without explicit registry
+- Policy must specify exactly one mode (trusted or excluded)
+- Registry matching is exact (no wildcards or patterns)
+- Validation is skipped for OCI layout and archive transports
+
+## Common Issues
+
+### Missing registry-policy flag
+
+```
+Error: required flag(s) "registry-policy" not set
+```
+
+**Solution**: Always provide `--registry-policy` flag with a valid policy file.
+
+### Both trusted and excluded specified
+
+```
+Error: policy must specify either trusted-registries or excluded-registries, not both
+```
+
+**Solution**: Use only one mode in your policy file.
+
+### Neither trusted nor excluded specified
+
+```
+Error: policy must specify either trusted-registries or excluded-registries
+```
+
+**Solution**: Add at least one of the required fields to your policy file.
+
+### Registry mismatch
+
+If your image reference doesn't include a registry, `docker.io` is assumed:
+
+```bash
+# These are equivalent
+check-image registry nginx:latest --registry-policy policy.json
+check-image registry docker.io/library/nginx:latest --registry-policy policy.json
+```
+
+## Best Practices
+
+<Check>Use allowlist mode (trusted-registries) for stricter security</Check>
+<Check>Include all registries used by your base images</Check>
+<Check>Document why each registry is trusted in comments</Check>
+<Check>Regularly review and update your registry policy</Check>
+<Check>Use environment-specific policies (dev vs prod)</Check>
+
+<Warning>Don't add unknown registries to the trusted list without vetting them first</Warning>
+
+## Registry Hostname Extraction
+
+check-image extracts the registry hostname from the image reference:
+
+| Image Reference | Extracted Registry |
+|----------------|--------------------|
+| `nginx:latest` | `docker.io` |
+| `docker.io/nginx:latest` | `docker.io` |
+| `docker.io/library/nginx:latest` | `docker.io` |
+| `ghcr.io/user/app:v1` | `ghcr.io` |
+| `registry.example.com:5000/app:latest` | `registry.example.com:5000` |
+| `localhost:5000/test:latest` | `localhost:5000` |
+
+## Related Commands
+
+- [`all`](/commands/all) - Run all checks including registry validation
+- [`secrets`](/commands/secrets) - Validate image doesn't contain secrets
+- [`labels`](/commands/labels) - Validate image labels

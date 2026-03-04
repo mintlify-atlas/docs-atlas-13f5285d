@@ -1,0 +1,305 @@
+---
+title: ports
+description: Validate that the image does not expose unauthorized ports
+---
+
+The `ports` command validates that a container image only exposes authorized network ports. This helps enforce network security policies and prevent unintended service exposure.
+
+## Usage
+
+```bash
+check-image ports <image> [--allowed-ports <ports>]
+```
+
+## Description
+
+The `ports` command extracts the list of exposed ports from the image configuration (from the `EXPOSE` instruction in Dockerfile) and validates them against an allowed list. Ports can be provided as a comma-separated list or loaded from a file.
+
+This check helps:
+- Enforce network security policies
+- Prevent unintended port exposure
+- Identify unauthorized services
+- Control network attack surface
+- Validate Dockerfile EXPOSE instructions
+
+## Flags
+
+<ParamField path="--allowed-ports" type="string">
+  Comma-separated list of allowed ports (e.g., `80,443`) or `@<file>` to load from JSON/YAML file. Use `@-` to read from stdin.
+  
+  Short form: `-p`
+</ParamField>
+
+<ParamField path="--output" type="string" default="text">
+  Output format: `text` or `json`
+  
+  Short form: `-o`
+</ParamField>
+
+<ParamField path="--color" type="string" default="auto">
+  Color output mode: `auto`, `always`, `never`
+</ParamField>
+
+<ParamField path="--log-level" type="string" default="info">
+  Set log level: trace, debug, info, warn, error, fatal, panic
+</ParamField>
+
+## Allowed Ports File Format
+
+When using `@<file>`, the file must contain an `allowed-ports` array:
+
+<CodeGroup>
+```yaml YAML
+allowed-ports:
+  - 80
+  - 443
+  - 8080
+  - 8443
+```
+
+```json JSON
+{
+  "allowed-ports": [80, 443, 8080, 8443]
+}
+```
+</CodeGroup>
+
+## Examples
+
+### Inline port list
+
+```bash
+check-image ports nginx:latest --allowed-ports 80,443
+```
+
+### Load from JSON file
+
+```bash
+check-image ports nginx:latest --allowed-ports @allowed-ports.json
+```
+
+### Load from YAML file
+
+```bash
+check-image ports nginx:latest --allowed-ports @allowed-ports.yaml
+```
+
+### Ports from stdin
+
+```bash
+echo '{"allowed-ports": [80, 443]}' | \
+  check-image ports nginx:latest --allowed-ports @-
+```
+
+### Check OCI archive
+
+```bash
+check-image ports oci-archive:/path/to/image.tar:latest --allowed-ports 8080,8443
+```
+
+### No allowed ports specified
+
+```bash
+# Will fail if image exposes any ports
+check-image ports nginx:latest
+```
+
+### JSON output
+
+```bash
+check-image ports nginx:latest --allowed-ports 80,443 -o json
+```
+
+## Output
+
+### Text Format
+
+When validation passes:
+```
+✓ All exposed ports are in the allowed list
+
+Details:
+  Exposed Ports: [80, 443]
+  Allowed Ports: [80, 443, 8080]
+```
+
+When no ports are exposed:
+```
+✓ No ports are exposed in this image
+
+Details:
+  Exposed Ports: []
+  Allowed Ports: [80, 443]
+```
+
+When validation fails (unauthorized ports):
+```
+✗ Unauthorized ports detected
+
+Details:
+  Exposed Ports: [80, 443, 3000, 5432]
+  Allowed Ports: [80, 443]
+  Unauthorized Ports: [3000, 5432]
+```
+
+When validation fails (no allowed ports provided):
+```
+✗ No allowed ports were provided
+
+Details:
+  Exposed Ports: [80, 443]
+  Allowed Ports: []
+```
+
+### JSON Format
+
+```json
+{
+  "check": "ports",
+  "image": "nginx:latest",
+  "passed": true,
+  "message": "All exposed ports are in the allowed list",
+  "details": {
+    "exposed-ports": [80, 443],
+    "allowed-ports": [80, 443, 8080],
+    "unauthorized-ports": null
+  }
+}
+```
+
+Failed validation:
+```json
+{
+  "check": "ports",
+  "image": "myapp:latest",
+  "passed": false,
+  "message": "",
+  "details": {
+    "exposed-ports": [80, 443, 3000],
+    "allowed-ports": [80, 443],
+    "unauthorized-ports": [3000]
+  }
+}
+```
+
+## Exit Codes
+
+| Code | Meaning | Example |
+|------|---------|------|
+| 0 | All exposed ports are allowed or no ports exposed | Image exposes 80,443 and allowed list is 80,443,8080 |
+| 1 | Unauthorized ports detected | Image exposes 3000 but allowed list is only 80,443 |
+| 2 | Execution error | Invalid port format, file not found |
+
+## Configuration
+
+When using the `all` command, configure ports validation in your config file:
+
+<CodeGroup>
+```yaml YAML
+checks:
+  ports:
+    allowed-ports: [80, 443, 8080]
+```
+
+```json JSON
+{
+  "checks": {
+    "ports": {
+      "allowed-ports": [80, 443, 8080]
+    }
+  }
+}
+```
+</CodeGroup>
+
+You can also reference a file:
+
+<CodeGroup>
+```yaml YAML
+checks:
+  ports:
+    allowed-ports: config/allowed-ports.yaml
+```
+
+```json JSON
+{
+  "checks": {
+    "ports": {
+      "allowed-ports": "config/allowed-ports.json"
+    }
+  }
+}
+```
+</CodeGroup>
+
+## Implementation Details
+
+- Reads exposed ports from image config's `ExposedPorts` field
+- Parses port format `<port>/<protocol>` (e.g., `8080/tcp`, `53/udp`)
+- Only validates the port number, protocol is ignored
+- Port comparison is exact (no ranges or wildcards)
+- Empty allowed list with exposed ports = validation failure
+- No exposed ports = always passes (regardless of allowed list)
+
+## Common Issues
+
+### No allowed ports provided
+
+```
+✗ No allowed ports were provided
+```
+
+**Solution**: Specify `--allowed-ports` with at least one port.
+
+### Invalid port format
+
+```
+Error: invalid port 'abc': strconv.Atoi: parsing "abc": invalid syntax
+```
+
+**Solution**: Ensure all ports are numeric values.
+
+### EXPOSE vs runtime ports
+
+The `ports` command validates `EXPOSE` declarations in the Dockerfile, not runtime port mappings (`-p` in `docker run`):
+
+```dockerfile
+# This is what the ports command checks
+EXPOSE 80
+EXPOSE 443
+```
+
+Runtime port mappings are not visible in the image config:
+```bash
+# This does NOT affect the ports check
+docker run -p 8080:80 nginx:latest
+```
+
+## Best Practices
+
+<Check>Define allowed ports based on your application's needs</Check>
+<Check>Include common web ports (80, 443) for web applications</Check>
+<Check>Be restrictive with database ports (3306, 5432, etc.)</Check>
+<Check>Document why each port is allowed</Check>
+<Check>Use separate policies for different application types</Check>
+
+<Warning>Remember that the ports check validates EXPOSE declarations, not runtime port mappings</Warning>
+
+## Port Protocols
+
+The image config stores ports with protocols (e.g., `80/tcp`, `53/udp`), but the validation only considers the port number:
+
+| Image EXPOSE | Extracted Port |
+|-------------|----------------|
+| `EXPOSE 80` | `80` |
+| `EXPOSE 80/tcp` | `80` |
+| `EXPOSE 53/udp` | `53` |
+| `EXPOSE 8080/tcp` | `8080` |
+
+If you need protocol-specific validation, you'll need to implement that separately.
+
+## Related Commands
+
+- [`all`](/commands/all) - Run all checks including ports validation
+- [`registry`](/commands/registry) - Validate registry trust
+- [`platform`](/commands/platform) - Validate image platform

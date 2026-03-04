@@ -1,0 +1,330 @@
+---
+title: root-user
+description: Validate that the image runs as non-root user
+---
+
+The `root-user` command validates that a container image is configured to run as a non-root user. This is a critical security best practice that prevents privilege escalation and limits the blast radius of security vulnerabilities.
+
+## Usage
+
+```bash
+check-image root-user <image>
+```
+
+## Description
+
+The `root-user` command checks the image's `USER` configuration to ensure it's not running as root (UID 0). Images without a `USER` instruction or with `USER root` will fail validation.
+
+This check helps:
+- Prevent privilege escalation attacks
+- Limit container breakout impact
+- Enforce principle of least privilege
+- Comply with security best practices (CIS Benchmarks, PCI DSS)
+- Meet Kubernetes Pod Security Standards
+
+<Warning>This is one of the most critical security checks. Always run containers as non-root unless absolutely necessary.</Warning>
+
+## Flags
+
+<ParamField path="--output" type="string" default="text">
+  Output format: `text` or `json`
+  
+  Short form: `-o`
+</ParamField>
+
+<ParamField path="--color" type="string" default="auto">
+  Color output mode: `auto`, `always`, `never`
+</ParamField>
+
+<ParamField path="--log-level" type="string" default="info">
+  Set log level: trace, debug, info, warn, error, fatal, panic
+</ParamField>
+
+## Examples
+
+### Basic usage
+
+```bash
+check-image root-user nginx:latest
+```
+
+### Check custom image
+
+```bash
+check-image root-user myapp:latest
+```
+
+### Check OCI layout
+
+```bash
+check-image root-user oci:/path/to/layout:1.0
+```
+
+### Check Docker archive
+
+```bash
+check-image root-user docker-archive:/path/to/image.tar:tag
+```
+
+### JSON output
+
+```bash
+check-image root-user nginx:latest -o json
+```
+
+## Output
+
+### Text Format
+
+When validation passes:
+```
+✓ Image is configured to run as a non-root user
+
+Details:
+  User: 1001
+```
+
+When validation fails (root user):
+```
+✗ Image is not configured to run as a non-root user
+
+Details:
+  User: root
+```
+
+When validation fails (no user specified):
+```
+✗ Image is not configured to run as a non-root user
+
+Details:
+  User: 
+```
+
+### JSON Format
+
+```json
+{
+  "check": "root-user",
+  "image": "nginx:latest",
+  "passed": true,
+  "message": "Image is configured to run as a non-root user",
+  "details": {
+    "user": "1001"
+  }
+}
+```
+
+Failed validation:
+```json
+{
+  "check": "root-user",
+  "image": "myapp:latest",
+  "passed": false,
+  "message": "Image is not configured to run as a non-root user",
+  "details": {
+    "user": "root"
+  }
+}
+```
+
+## Exit Codes
+
+| Code | Meaning | Example |
+|------|---------|------|
+| 0 | Image runs as non-root | USER 1001 |
+| 1 | Image runs as root or no user specified | USER root or no USER instruction |
+| 2 | Execution error | Image not found |
+
+## Configuration
+
+When using the `all` command, include `root-user` in your config file:
+
+<CodeGroup>
+```yaml YAML
+checks:
+  root-user: {}
+```
+
+```json JSON
+{
+  "checks": {
+    "root-user": {}
+  }
+}
+```
+</CodeGroup>
+
+The `root-user` check has no additional configuration options.
+
+## Implementation Details
+
+- Reads the `USER` field from the image config
+- Passes if user is set to any value except "root" or empty string
+- Fails if `config.Config.User` is empty (no USER instruction)
+- Fails if `config.Config.User == "root"`
+- Works with both numeric UIDs (e.g., `1001`) and usernames (e.g., `appuser`)
+
+## Common Issues
+
+### No USER instruction
+
+```
+✗ Image is not configured to run as a non-root user
+Details:
+  User: 
+```
+
+This means the Dockerfile has no `USER` instruction, so the container will run as root by default.
+
+**Solution**: Add a `USER` instruction to your Dockerfile:
+
+```dockerfile
+# Create non-root user
+RUN adduser -D -u 1001 appuser
+
+# Switch to non-root user
+USER 1001
+
+# Or use username
+USER appuser
+```
+
+### Explicit root user
+
+```
+✗ Image is not configured to run as a non-root user
+Details:
+  User: root
+```
+
+The Dockerfile explicitly sets `USER root`.
+
+**Solution**: Remove or change the `USER root` instruction.
+
+### Base image runs as root
+
+Many official images (nginx, postgres, etc.) run as root by default:
+
+```bash
+# Official nginx runs as root
+check-image root-user nginx:latest
+✗ Image is not configured to run as a non-root user
+```
+
+**Solution**: Use a non-root variant or create your own Dockerfile:
+
+```dockerfile
+# Use non-root variant
+FROM nginxinc/nginx-unprivileged:latest
+
+# Or build your own
+FROM nginx:latest
+RUN chown -R nginx:nginx /var/cache/nginx /var/run /var/log/nginx
+USER nginx
+```
+
+## Best Practices
+
+<Check>Always run containers as non-root unless absolutely necessary</Check>
+<Check>Use numeric UIDs (e.g., 1001) for better portability</Check>
+<Check>Ensure the user has minimal permissions needed</Check>
+<Check>Create a dedicated user for the application</Check>
+<Check>Set appropriate file ownership before switching users</Check>
+
+<Warning>Some base images require root for initialization. Consider multi-stage builds or init containers.</Warning>
+
+## Dockerfile Examples
+
+### Create and use non-root user
+
+```dockerfile
+FROM alpine:latest
+
+# Create non-root user
+RUN adduser -D -u 1001 appuser
+
+# Set ownership
+COPY --chown=appuser:appuser app /app
+
+# Switch to non-root user
+USER 1001
+
+CMD ["/app"]
+```
+
+### Using existing user
+
+```dockerfile
+FROM node:20-alpine
+
+# node image already has 'node' user (UID 1000)
+WORKDIR /app
+
+COPY package*.json ./
+RUN npm ci --only=production
+
+COPY --chown=node:node . .
+
+USER node
+
+CMD ["node", "server.js"]
+```
+
+### Multi-stage build
+
+```dockerfile
+# Build stage (can run as root)
+FROM golang:1.26 AS builder
+WORKDIR /app
+COPY . .
+RUN go build -o myapp
+
+# Final stage (non-root)
+FROM alpine:latest
+RUN adduser -D -u 1001 appuser
+COPY --from=builder --chown=appuser:appuser /app/myapp /usr/local/bin/
+USER 1001
+CMD ["myapp"]
+```
+
+## User Format
+
+The `USER` instruction accepts multiple formats:
+
+| Format | Example | Notes |
+|--------|---------|-------|
+| Numeric UID | `USER 1001` | Recommended for portability |
+| Username | `USER appuser` | Must exist in /etc/passwd |
+| UID:GID | `USER 1001:1001` | Specifies both user and group |
+| Username:Groupname | `USER appuser:appgroup` | Both must exist |
+
+The check validates that the user portion is not "root" or empty.
+
+## Kubernetes Integration
+
+Kubernetes Pod Security Standards require non-root containers in the `Restricted` policy:
+
+```yaml
+apiVersion: v1
+kind: Pod
+metadata:
+  name: myapp
+spec:
+  securityContext:
+    runAsNonRoot: true  # Enforces non-root
+  containers:
+  - name: app
+    image: myapp:latest
+    securityContext:
+      allowPrivilegeEscalation: false
+      capabilities:
+        drop: ["ALL"]
+```
+
+Using `check-image root-user` in CI ensures your images comply with these policies.
+
+## Related Commands
+
+- [`all`](/commands/all) - Run all checks including root-user validation
+- [`secrets`](/commands/secrets) - Validate image doesn't contain secrets
+- [`entrypoint`](/commands/entrypoint) - Validate entrypoint configuration

@@ -1,80 +1,418 @@
 ---
-title: "Quickstart"
-description: "Start building awesome documentation in minutes"
+title: Quick Start
+description: Get started with Check Image in 3 steps - validate your first container image
 ---
 
-## Get started in three steps
+This guide will help you validate your first container image with Check Image in just a few minutes.
 
-Get your documentation site running locally and make your first customization.
+## Prerequisites
 
-### Step 1: Set up your local environment
-
-<AccordionGroup>
-  <Accordion icon="copy" title="Clone your docs locally">
-    During the onboarding process, you created a GitHub repository with your docs content if you didn't already have one. You can find a link to this repository in your [dashboard](https://dashboard.mintlify.com).
+<Steps>
+  <Step title="Install Check Image">
+    If you haven't installed Check Image yet, follow the [installation guide](/installation).
     
-    To clone the repository locally so that you can make and preview changes to your docs, follow the [Cloning a repository](https://docs.github.com/en/repositories/creating-and-managing-repositories/cloning-a-repository) guide in the GitHub docs.
-  </Accordion>
-  <Accordion icon="rectangle-terminal" title="Start the preview server">
-    1. Install the Mintlify CLI: `npm i -g mint`
-    2. Navigate to your docs directory and run: `mint dev`
-    3. Open `http://localhost:3000` to see your docs live!
+    Quick install with Homebrew:
+    ```bash
+    brew tap jarfernandez/tap
+    brew install check-image
+    ```
+  </Step>
+  
+  <Step title="Verify Installation">
+    Confirm Check Image is installed correctly:
+    ```bash
+    check-image version --short
+    ```
     
-    <Tip>Your preview updates automatically as you edit files.</Tip>
-  </Accordion>
-</AccordionGroup>
+    Expected output:
+    ```
+    v0.19.4
+    ```
+  </Step>
+</Steps>
 
-### Step 2: Deploy your changes
+## Your First Validation
 
-<AccordionGroup>
-  <Accordion icon="github" title="Install our GitHub app">
-    Install the Mintlify GitHub app from your [dashboard](https://dashboard.mintlify.com/settings/organization/github-app).
+Let's validate the official nginx image with a simple age check:
+
+```bash
+check-image age nginx:latest --max-age 90
+```
+
+<Tip>
+  This command checks if the nginx:latest image was created within the last 90 days. Images older than this may contain outdated dependencies or security vulnerabilities.
+</Tip>
+
+### Understanding the Output
+
+Successful validation:
+```
+✓ Image is less than 90 days old
+
+Image: nginx:latest
+Created: 2026-02-04T23:53:09Z
+Age: 28 days
+Max Age: 90 days
+```
+
+Failed validation:
+```
+✗ Image is older than 90 days
+
+Image: nginx:latest
+Created: 2025-10-15T12:30:00Z
+Age: 141 days
+Max Age: 90 days
+```
+
+## Common Validation Checks
+
+Now let's try the most common security and operational checks:
+
+<Steps>
+  <Step title="Check Image Size">
+    Validate that an image is smaller than 200MB:
+    ```bash
+    check-image size nginx:latest --max-size 200
+    ```
     
-    Our GitHub app automatically deploys your changes to your docs site, so you don't need to manage deployments yourself.
-</Accordion>
-<Accordion icon="palette" title="Update your site name and colors">
-    For a first change, let's update the name and colors of your docs site.
+    This ensures images stay lean and deploy quickly. Large images can:
+    - Slow down deployments
+    - Increase network transfer costs
+    - Contain unnecessary dependencies
+  </Step>
+  
+  <Step title="Check for Root User">
+    Verify the image runs as a non-root user:
+    ```bash
+    check-image root-user nginx:latest
+    ```
+    
+    <Warning>
+      Running containers as root is a security risk. If the container is compromised, the attacker has root privileges.
+    </Warning>
+    
+    For nginx, this check will fail because the official image runs as root. Let's try a safer image:
+    ```bash
+    check-image root-user nginxinc/nginx-unprivileged:latest
+    ```
+  </Step>
+  
+  <Step title="Check for Secrets">
+    Scan for embedded passwords, tokens, and keys:
+    ```bash
+    check-image secrets myapp:latest
+    ```
+    
+    This scans:
+    - Environment variables for sensitive patterns (password, secret, token, key)
+    - Files across all layers for SSH keys, cloud credentials, password files
+    
+    <Tip>
+      Use `--skip-env-vars` or `--skip-files` to limit the scan scope.
+    </Tip>
+  </Step>
+  
+  <Step title="Check Registry Trust">
+    Validate the image comes from a trusted registry:
+    
+    First, create a simple registry policy file:
+    ```json config/registry-policy.json
+    {
+      "trusted-registries": [
+        "docker.io",
+        "ghcr.io",
+        "gcr.io"
+      ]
+    }
+    ```
+    
+    Then run the check:
+    ```bash
+    check-image registry nginx:latest \
+      --registry-policy config/registry-policy.json
+    ```
+  </Step>
+</Steps>
 
-    1. Open `docs.json` in your editor.
-    2. Change the `"name"` field to your project name.
-    3. Update the `"colors"` to match your brand.
-    4. Save and see your changes instantly at `http://localhost:3000`.
+## Run All Checks at Once
 
-    <Tip>Try changing the primary color to see an immediate difference!</Tip>
-  </Accordion>
-</AccordionGroup>
+Instead of running checks individually, use the `all` command to run multiple checks:
 
-### Step 3: Go live
-
-<Accordion icon="rocket" title="Publish your docs">
-  1. Commit and push your changes.
-  2. Your docs will update and be live in moments!
-</Accordion>
-
-## Next steps
-
-Now that you have your docs running, explore these key features:
-
-<CardGroup cols={2}>
-
-<Card title="Write Content" icon="pen-to-square" href="/essentials/markdown">
-  Learn MDX syntax and start writing your documentation.
-</Card>
-
-<Card title="Customize style" icon="palette" href="/essentials/settings">
-  Make your docs match your brand perfectly.
-</Card>
-
-<Card title="Add code examples" icon="square-code" href="/essentials/code">
-  Include syntax-highlighted code blocks.
-</Card>
-
-<Card title="API documentation" icon="code" href="/api-reference/introduction">
-  Auto-generate API docs from OpenAPI specs.
-</Card>
-
-</CardGroup>
+```bash
+check-image all nginx:latest \
+  --max-age 90 \
+  --max-size 200 \
+  --skip registry,labels,platform
+```
 
 <Note>
-  **Need help?** See our [full documentation](https://mintlify.com/docs) or join our [community](https://mintlify.com/community).
+  We skip `registry`, `labels`, and `platform` checks because they require additional configuration files. We'll cover those in the next section.
 </Note>
+
+### Understanding the All Command Output
+
+Text output shows a summary:
+```
+✓ Age check passed
+✓ Size check passed
+✗ Root user check failed
+✓ Healthcheck passed
+✗ Ports check failed
+✓ Secrets check passed
+✓ Entrypoint check passed
+
+Summary:
+  Total: 7
+  Passed: 5
+  Failed: 2
+  Errored: 0
+  Skipped: registry, labels, platform
+```
+
+JSON output provides full details:
+```bash
+check-image all nginx:latest --skip registry,labels,platform -o json
+```
+
+## Using Configuration Files
+
+For production use, define all your validation rules in a config file:
+
+<Steps>
+  <Step title="Create Config File">
+    Create `.check-image/config.yaml` in your project:
+    ```yaml .check-image/config.yaml
+    checks:
+      age:
+        max-age: 90
+      size:
+        max-size: 200
+        max-layers: 20
+      root-user: {}
+      healthcheck: {}
+      secrets:
+        skip-env-vars: false
+        skip-files: false
+      entrypoint:
+        allow-shell-form: false
+      ports:
+        allowed-ports:
+          - 80
+          - 443
+          - 8080
+      registry:
+        registry-policy:
+          trusted-registries:
+            - docker.io
+            - ghcr.io
+            - gcr.io
+    ```
+  </Step>
+  
+  <Step title="Run Validation with Config">
+    Now run all checks defined in the config:
+    ```bash
+    check-image all myapp:latest --config .check-image/config.yaml
+    ```
+    
+    This is ideal for:
+    - CI/CD pipelines
+    - Consistent validation across teams
+    - Version-controlled policies
+  </Step>
+</Steps>
+
+## Working with Different Image Sources
+
+Check Image supports multiple image transport formats:
+
+<CodeGroup>
+```bash Docker Daemon
+# Default behavior: tries Docker daemon first, then registry
+check-image age myapp:latest
+```
+
+```bash Remote Registry
+# Explicitly specify registry
+check-image age ghcr.io/myorg/myapp:v1.2.3
+```
+
+```bash OCI Layout
+# From an OCI layout directory
+check-image age oci:/path/to/layout:latest
+```
+
+```bash OCI Archive
+# From an OCI tarball
+check-image age oci-archive:/path/to/image.tar:latest
+```
+
+```bash Docker Archive
+# From docker save output
+docker save nginx:latest -o nginx.tar
+check-image age docker-archive:./nginx.tar:nginx:latest
+```
+</CodeGroup>
+
+## JSON Output for Scripting
+
+All commands support JSON output for integration with scripts and tools:
+
+```bash
+check-image age nginx:latest --max-age 90 -o json
+```
+
+Output:
+```json
+{
+  "check": "age",
+  "image": "nginx:latest",
+  "passed": true,
+  "message": "Image is less than 90 days old",
+  "details": {
+    "created-at": "2026-02-04T23:53:09Z",
+    "age-days": 28.5,
+    "max-age": 90
+  }
+}
+```
+
+Use with `jq` for parsing:
+```bash
+if check-image age nginx:latest -o json | jq -e '.passed'; then
+  echo "Image validation passed"
+else
+  echo "Image validation failed"
+  exit 1
+fi
+```
+
+## Exit Codes for CI/CD
+
+Check Image uses standard exit codes:
+
+| Exit Code | Meaning | Example |
+|-----------|---------|----------|
+| 0 | Validation succeeded | All checks passed |
+| 1 | Validation failed | Image too old, runs as root |
+| 2 | Execution error | Image not found, invalid config |
+
+Use in scripts:
+```bash
+check-image all myapp:latest --config .check-image/config.yaml
+if [ $? -eq 0 ]; then
+  echo "✓ All checks passed - safe to deploy"
+  docker push myapp:latest
+else
+  echo "✗ Validation failed - deployment blocked"
+  exit 1
+fi
+```
+
+## Using in CI/CD Pipelines
+
+### GitHub Actions
+
+Add to your workflow:
+
+```yaml .github/workflows/validate.yml
+name: Validate Image
+on: [push]
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      
+      - name: Build image
+        run: docker build -t myapp:${{ github.sha }} .
+      
+      - name: Validate image
+        uses: jarfernandez/check-image@v0.19.4
+        with:
+          image: myapp:${{ github.sha }}
+          config: .check-image/config.yaml
+```
+
+### Docker
+
+Use the Docker image in any CI system:
+
+```bash
+docker run --rm \
+  -v "$(pwd)/config:/config:ro" \
+  ghcr.io/jarfernandez/check-image:latest \
+  all myapp:latest \
+  --config /config/config.yaml
+```
+
+## Next Steps
+
+Now that you've validated your first images, explore the full command reference:
+
+<CardGroup cols={2}>
+  <Card title="Age Check" icon="clock" href="/commands/age">
+    Validate image freshness and age limits
+  </Card>
+  <Card title="Size Check" icon="weight-scale" href="/commands/size">
+    Control image size and layer count
+  </Card>
+  <Card title="Security Checks" icon="shield" href="/commands/root-user">
+    Verify non-root users, secrets, and ports
+  </Card>
+  <Card title="All Command" icon="list-check" href="/commands/all">
+    Run comprehensive validation suites
+  </Card>
+</CardGroup>
+
+## Common Issues
+
+<AccordionGroup>
+  <Accordion title="Error: image not found">
+    Make sure:
+    - The image name and tag are correct
+    - You have network access to the registry
+    - For private registries, you're authenticated (`docker login` or use `--username`/`--password-stdin`)
+    - For local images, Docker daemon is running
+  </Accordion>
+  
+  <Accordion title="Error: exit code 2 (execution error)">
+    This usually means:
+    - Invalid command syntax or arguments
+    - Missing required configuration files
+    - Config file has invalid JSON/YAML syntax
+    - Image reference format is incorrect
+  </Accordion>
+  
+  <Accordion title="Check shows 'dev' version">
+    If installed with `go install`, version shows as `dev`. This is normal.
+    
+    For production use with proper version numbers, use:
+    - Pre-built binaries from releases
+    - Homebrew installation
+    - Docker image
+    - GitHub Action
+  </Accordion>
+  
+  <Accordion title="Private registry authentication failed">
+    For private registries, provide credentials:
+    
+    ```bash
+    # Using environment variables (recommended for CI)
+    export CHECK_IMAGE_USERNAME=myuser
+    export CHECK_IMAGE_PASSWORD=mytoken
+    check-image age myregistry.example.com/myapp:latest
+    
+    # Using --password-stdin (avoids password in process list)
+    echo "mytoken" | check-image age myregistry.example.com/myapp:latest \
+      --username myuser \
+      --password-stdin
+    
+    # Using Docker config (if already logged in)
+    docker login myregistry.example.com
+    check-image age myregistry.example.com/myapp:latest
+    ```
+  </Accordion>
+</AccordionGroup>

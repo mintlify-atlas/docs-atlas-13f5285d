@@ -1,0 +1,504 @@
+---
+title: Project Architecture
+description: Understand the check-image codebase structure and design patterns
+---
+
+## Project Structure
+
+check-image follows standard Go project layout conventions:
+
+```
+check-image/
+├── cmd/
+│   └── check-image/
+│       ├── main.go           # Entry point
+│       └── commands/         # Cobra command implementations
+│           ├── root.go       # Root command and global flags
+│           ├── age.go        # Age validation command
+│           ├── size.go       # Size validation command
+│           ├── registry.go   # Registry validation command
+│           ├── ports.go      # Ports validation command
+│           ├── root-user.go  # Root user validation command
+│           ├── healthcheck.go # Healthcheck validation command
+│           ├── secrets.go    # Secrets detection command
+│           ├── entrypoint.go # Entrypoint validation command
+│           ├── labels.go     # Labels validation command
+│           ├── platform.go   # Platform validation command
+│           ├── all.go        # Run all checks command
+│           ├── version.go    # Version command
+│           ├── render.go     # Output rendering functions
+│           └── styles.go     # Terminal styling (Lip Gloss)
+├── internal/
+│   ├── fileutil/             # File reading utilities
+│   ├── imageutil/            # Image retrieval and operations
+│   │   ├── auth.go          # Registry authentication
+│   │   ├── image.go         # Image loading logic
+│   │   └── reference.go     # Transport parsing
+│   ├── labels/               # Label policy validation
+│   ├── output/               # Output formatting
+│   │   ├── format.go        # Format types (text/json)
+│   │   └── results.go       # Result structures
+│   ├── registry/             # Registry policy validation
+│   ├── secrets/              # Secrets detection
+│   │   ├── detector.go      # Scanning logic
+│   │   └── policy.go        # Policy and patterns
+│   └── version/              # Version information
+├── config/                   # Sample configuration files
+│   ├── allowed-ports.yaml
+│   ├── allowed-platforms.yaml
+│   ├── registry-policy.yaml
+│   ├── labels-policy.yaml
+│   ├── secrets-policy.yaml
+│   ├── config.yaml          # All-checks configuration
+│   └── config-inline.yaml   # Inline policy examples
+├── .github/
+│   └── workflows/            # CI/CD workflows
+├── Dockerfile                # Multi-stage Docker build
+├── .goreleaser.yml           # Release configuration
+├── .pre-commit-config.yaml   # Pre-commit hooks
+├── go.mod                    # Go module definition
+└── go.sum                    # Dependency checksums
+```
+
+## Command Pattern
+
+All validation commands follow a consistent architecture:
+
+### 1. Command Structure
+
+Commands are defined in `cmd/check-image/commands/` using Cobra:
+
+```go
+var ageCmd = &cobra.Command{
+    Use:   "age <image>",
+    Short: "Validate image age",
+    Args:  cobra.ExactArgs(1),
+    RunE: func(cmd *cobra.Command, args []string) error {
+        // Command logic
+    },
+}
+```
+
+### 2. Validation Flow
+
+Each command follows this pattern:
+
+```go
+func runAge(imageName string, maxAge int) (*output.CheckResult, error) {
+    // 1. Load image
+    img, cleanup, err := imageutil.GetImageAndConfig(imageName)
+    if err != nil {
+        return nil, err
+    }
+    defer cleanup()
+
+    // 2. Perform validation
+    config := img.Config
+    ageInDays := time.Since(config.Created).Hours() / 24
+
+    // 3. Return result
+    return &output.CheckResult{
+        Check:   "age",
+        Image:   imageName,
+        Passed:  ageInDays <= float64(maxAge),
+        Message: fmt.Sprintf("Image is %.1f days old", ageInDays),
+        Details: output.AgeDetails{
+            CreatedAt: config.Created,
+            AgeDays:   ageInDays,
+            MaxAge:    maxAge,
+        },
+    }, nil
+}
+```
+
+### 3. Output Rendering
+
+The `RunE` handler calls `renderResult()` to output text or JSON:
+
+```go
+RunE: func(cmd *cobra.Command, args []string) error {
+    result, err := runAge(args[0], maxAge)
+    if err != nil {
+        commands.Result = commands.ExecutionError
+        return err
+    }
+
+    // Render output (text or JSON)
+    renderResult(cmd.OutOrStdout(), result)
+
+    // Update global result
+    if result.Passed {
+        commands.UpdateResult(commands.ValidationSucceeded)
+    } else {
+        commands.UpdateResult(commands.ValidationFailed)
+    }
+
+    return nil
+}
+```
+
+### 4. Exit Code Determination
+
+The global `Result` variable drives the exit code in `main.go`:
+
+```go
+func main() {
+    if err := commands.RootCmd.Execute(); err != nil {
+        os.Exit(int(commands.ExecutionError))
+    }
+    os.Exit(int(commands.Result))
+}
+```
+
+## Exit Code Strategy
+
+check-image uses three exit codes:
+
+| Code | Result | Meaning |
+|------|--------|----------|
+| 0 | `ValidationSucceeded` or `ValidationSkipped` | Checks passed or no checks ran |
+| 1 | `ValidationFailed` | Image failed validation |
+| 2 | `ExecutionError` | Tool error (bad config, image not found, invalid args) |
+
+**Priority ordering:**
+```
+ExecutionError > ValidationFailed > ValidationSucceeded > ValidationSkipped
+```
+
+The `UpdateResult()` helper in `root.go` enforces this precedence:
+
+```go
+func UpdateResult(newResult ValidationResult) {
+    if newResult > Result {  // Higher value = higher priority
+        Result = newResult
+    }
+}
+```
+
+In the `all` command, if some checks fail and others error, exit code 2 takes precedence.
+
+## Image Retrieval Strategy
+
+The `imageutil` package handles image loading with transport awareness:
+
+### Transport Detection
+
+`ParseReference()` detects transport prefixes:
+
+```go
+ref, err := ParseReference("oci:/path/to/layout:latest")
+// ref.Transport = OCILayout
+// ref.Path = "/path/to/layout"
+// ref.Tag = "latest"
+```
+
+**Supported transports:**
+- `oci:` - OCI layout directory
+- `oci-archive:` - OCI tarball archive
+- `docker-archive:` - Docker tarball (from `docker save`)
+- No prefix - Docker daemon with registry fallback
+
+### Fallback Pattern
+
+`GetImage()` implements fallback logic:
+
+```go
+func GetImage(ref string) (v1.Image, func(), error) {
+    parsed, err := ParseReference(ref)
+    if err != nil {
+        return nil, nil, err
+    }
+
+    switch parsed.Transport {
+    case OCILayout:
+        return GetOCILayoutImage(parsed)
+    case OCIArchive:
+        return GetOCIArchiveImage(parsed)
+    case DockerArchive:
+        return GetDockerArchiveImage(parsed)
+    case Default:
+        // Try Docker daemon first
+        img, err := GetLocalImage(ref)
+        if err == nil {
+            return img, func() {}, nil
+        }
+        // Fall back to remote registry
+        return GetRemoteImage(ref)
+    }
+}
+```
+
+**Key behaviors:**
+- Explicit transport prefix → only that source is tried
+- No prefix → Docker daemon, then remote registry
+- `GetImage()` returns `(v1.Image, func(), error)`
+- Cleanup function must be deferred: `defer cleanup()`
+- Only `oci-archive:` needs cleanup (temp directory)
+
+### Archive Extraction
+
+OCI archives are extracted securely:
+
+```go
+func extractOCIArchive(tarPath string) (string, error) {
+    // 1. Create temp directory
+    tmpDir, err := os.MkdirTemp("", "check-image-oci-*")
+
+    // 2. Open tarball (supports gzip)
+    file, err := os.Open(tarPath)
+    reader := tar.NewReader(file)  // or gzip.NewReader
+
+    // 3. Extract with security checks
+    for {
+        header, err := reader.Next()
+
+        // Prevent path traversal
+        if strings.Contains(header.Name, "..") {
+            return "", fmt.Errorf("invalid path in archive")
+        }
+
+        // Prevent decompression bombs (5GB limit)
+        if totalSize > 5*1024*1024*1024 {
+            return "", fmt.Errorf("archive too large")
+        }
+
+        // Extract file
+        target := filepath.Join(tmpDir, header.Name)
+        // ... write file
+    }
+
+    return tmpDir, nil
+}
+```
+
+## Registry Authentication
+
+Credentials are resolved with precedence:
+
+**1. CLI flags** (highest priority):
+```bash
+check-image age private-registry.com/image:latest \
+  --username user \
+  --password-stdin < token.txt
+```
+
+**2. Environment variables:**
+```bash
+export CHECK_IMAGE_USERNAME=user
+export CHECK_IMAGE_PASSWORD=token
+check-image age private-registry.com/image:latest
+```
+
+**3. Docker config** (lowest priority):
+```bash
+docker login private-registry.com
+check-image age private-registry.com/image:latest
+```
+
+### Implementation
+
+Authentication is handled in `internal/imageutil/auth.go`:
+
+```go
+var activeKeychain authn.Keychain = authn.DefaultKeychain
+
+func SetStaticCredentials(username, password string) {
+    staticKC := &staticKeychain{
+        username: username,
+        password: password,
+    }
+    // Chain with DefaultKeychain for fallback
+    activeKeychain = authn.NewMultiKeychain(staticKC, authn.DefaultKeychain)
+}
+```
+
+The `PersistentPreRunE` in `root.go` reads credentials and calls `SetStaticCredentials()`.
+
+## Output System
+
+### Format Selection
+
+Controlled by `--output` global flag:
+
+```bash
+check-image age nginx:latest --output json
+check-image age nginx:latest --output text  # default
+```
+
+### Result Structures
+
+Defined in `internal/output/results.go`:
+
+```go
+type CheckResult struct {
+    Check   string      `json:"check"`
+    Image   string      `json:"image"`
+    Passed  bool        `json:"passed"`
+    Message string      `json:"message"`
+    Details interface{} `json:"details,omitempty"`
+}
+
+type AgeDetails struct {
+    CreatedAt time.Time `json:"created-at"`
+    AgeDays   float64   `json:"age-days"`
+    MaxAge    int       `json:"max-age"`
+}
+```
+
+<Info>
+All JSON keys use kebab-case for consistency (e.g., `created-at`, not `createdAt` or `created_at`).
+</Info>
+
+### Rendering
+
+The `renderResult()` function dispatches based on format:
+
+```go
+func renderResult(out io.Writer, result *output.CheckResult) {
+    if OutputFmt == output.JSONFormat {
+        output.RenderJSON(out, result)
+    } else {
+        renderAgeResult(out, result)  // Text rendering
+    }
+}
+```
+
+### Color Support
+
+Controlled by `--color` flag:
+
+```bash
+check-image age nginx:latest --color always
+check-image age nginx:latest --color never
+check-image age nginx:latest --color auto  # default
+```
+
+**Resolution order:**
+1. `NO_COLOR` environment variable (overrides everything)
+2. `--color never`
+3. `--color always` (respects `NO_COLOR`)
+4. `--color auto` (TTY detection + `CLICOLOR_FORCE`)
+
+Colors are only applied in text mode, not JSON.
+
+## Configuration System
+
+### File Format Support
+
+Both JSON and YAML are supported:
+
+```bash
+check-image registry nginx:latest --registry-policy policy.yaml
+check-image registry nginx:latest --registry-policy policy.json
+```
+
+Format detection:
+- Extension `.yaml` or `.yml` → YAML parser
+- Otherwise → JSON parser
+
+### Stdin Support
+
+All file arguments accept `-` for stdin:
+
+```bash
+cat policy.yaml | check-image registry nginx:latest --registry-policy -
+echo '{"trusted-registries": ["docker.io"]}' | check-image registry nginx:latest --registry-policy -
+```
+
+When reading from stdin:
+- Format auto-detected (JSON starts with `{` or `[`)
+- 10MB size limit
+- Cannot combine with other stdin-consuming flags
+
+### Inline Configuration
+
+The `all` command supports embedding policies:
+
+```yaml
+checks:
+  registry:
+    registry-policy:
+      trusted-registries:
+        - docker.io
+        - ghcr.io
+  labels:
+    labels-policy:
+      required-labels:
+        - name: maintainer
+        - name: version
+          pattern: "^v?\\d+\\.\\d+\\.\\d+$"
+```
+
+Both file paths (strings) and inline objects are supported.
+
+## Validation Logic
+
+### Registry Policy
+
+Defined in `internal/registry/policy.go`:
+
+```go
+type Policy struct {
+    TrustedRegistries  []string `json:"trusted-registries" yaml:"trusted-registries"`
+    ExcludedRegistries []string `json:"excluded-registries" yaml:"excluded-registries"`
+}
+```
+
+**Allowlist mode** (trusted-registries):
+- Only registries in the list are allowed
+- All others are blocked
+
+**Blocklist mode** (excluded-registries):
+- All registries except those in the list are allowed
+
+Cannot specify both modes in the same policy.
+
+### Secrets Detection
+
+Defined in `internal/secrets/`:
+
+**Default patterns** in `policy.go`:
+```go
+var DefaultFilePatterns = map[string]string{
+    "**/.ssh/id_rsa":           "SSH private key",
+    "**/.ssh/id_dsa":           "SSH private key",
+    "**/.aws/credentials":      "AWS credentials",
+    "**/.docker/config.json":   "Docker registry credentials",
+    "**/password.txt":          "Password file",
+    // ... more patterns
+}
+```
+
+**Detection logic** in `detector.go`:
+
+```go
+func CheckEnvironmentVariables(envVars []string, policy *Policy) []string {
+    var found []string
+    patterns := []string{"password", "secret", "token", "key", "api"}
+
+    for _, env := range envVars {
+        name := strings.ToLower(strings.Split(env, "=")[0])
+        for _, pattern := range patterns {
+            if strings.Contains(name, pattern) {
+                // Check if excluded
+                if !isExcluded(name, policy.ExcludedEnvVars) {
+                    found = append(found, env)
+                }
+            }
+        }
+    }
+    return found
+}
+```
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Testing" icon="flask" href="/development/testing">
+    Learn about test patterns and coverage
+  </Card>
+  
+  <Card title="Release Process" icon="tag" href="/development/release-process">
+    Understand versioning and releases
+  </Card>
+</CardGroup>

@@ -1,0 +1,202 @@
+---
+title: Contributing Overview
+description: Learn how to contribute to the check-image project
+---
+
+## Welcome Contributors
+
+Contributions to check-image are welcome! This guide will help you get started with contributing to the project.
+
+## Code of Conduct
+
+Be respectful and constructive in all interactions. This project aims to be welcoming to contributors from all backgrounds.
+
+## How to Contribute
+
+### Reporting Issues
+
+If you find a bug or have a feature request:
+
+1. Check existing issues to avoid duplicates
+2. Create a new issue with a clear title and description
+3. Include reproduction steps for bugs
+4. For features, explain the use case and benefits
+
+### Pull Request Process
+
+1. **Fork and clone** the repository:
+   ```bash
+   git clone https://github.com/jarfernandez/check-image.git
+   cd check-image
+   ```
+
+2. **Create a feature branch**:
+   ```bash
+   git checkout -b feat/your-feature-name
+   ```
+
+3. **Make your changes** following the [project guidelines](/development/architecture)
+
+4. **Install pre-commit hooks**:
+   ```bash
+   brew install pre-commit golangci-lint
+   pre-commit install
+   pre-commit install --hook-type commit-msg
+   ```
+
+5. **Run tests and checks**:
+   ```bash
+   go test ./...
+   pre-commit run --all-files
+   ```
+
+6. **Commit using Conventional Commits**:
+   ```bash
+   git commit -m "feat: Add new validation check"
+   ```
+
+7. **Push and create a pull request**:
+   ```bash
+   git push origin feat/your-feature-name
+   gh pr create --title "feat: Add new validation check" --body "Description of changes"
+   ```
+
+### PR Requirements
+
+- PR title must follow Conventional Commits format
+- Title must start with uppercase letter after the prefix
+- All CI checks must pass (tests, linting, build)
+- Code must include tests with good coverage
+- Documentation must be updated (README.md and CLAUDE.md)
+
+## Commit Message Format
+
+This project uses [Conventional Commits](https://www.conventionalcommits.org/):
+
+```
+<type>: <description>
+
+[optional body]
+
+[optional footer]
+```
+
+**Allowed types:**
+
+- `feat`: New feature (triggers minor version bump)
+- `fix`: Bug fix (triggers patch version bump)
+- `docs`: Documentation changes (no release)
+- `refactor`: Code refactoring (triggers patch version bump)
+- `test`: Test updates (no release)
+- `chore`: Maintenance tasks (no release)
+- `perf`: Performance improvements (triggers patch version bump)
+- `ci`: CI/CD changes (no release)
+- `build`: Build system changes (no release)
+- `revert`: Revert previous commit
+
+**Examples:**
+
+```bash
+git commit -m "feat: Add support for OCI archives"
+git commit -m "fix: Handle missing environment variables"
+git commit -m "docs: Update installation instructions"
+git commit -m "refactor: Simplify error handling in imageutil"
+```
+
+<Info>
+Commit messages and PR titles must start with an uppercase letter after the type prefix. Wrap code, commands, flags, and file paths in backticks.
+</Info>
+
+## Development Workflow
+
+### GitHub CLI
+
+Use the GitHub CLI (`gh`) for all GitHub interactions:
+
+```bash
+# Create an issue
+gh issue create --title "bug: Image parsing fails" --body "Description"
+
+# Create a pull request
+gh pr create --title "feat: Add new check" --body "Implementation details"
+
+# View PR checks
+gh pr checks
+```
+
+### Branch Strategy
+
+- **Never commit directly to `main`**
+- Always create a feature branch
+- Use descriptive branch names: `feat/platform-validation`, `fix/auth-error`
+- Delete branches after merging
+
+## What Gets Checked
+
+When you run `pre-commit` or commit changes, the following checks run automatically:
+
+**Mandatory checks (block commits):**
+- Trailing whitespace, EOF newlines, line endings
+- YAML and JSON syntax validation
+- `gofmt` formatting
+- `go mod tidy`
+- `go vet` analysis
+- `golangci-lint` (see `.golangci.yml` for rules)
+- `go test` with race detection
+- Commit message format validation
+
+**Warning checks (informational):**
+- `gosec` security scanning (doesn't block commits)
+
+## Documentation Requirements
+
+Every new feature must update documentation:
+
+### CLAUDE.md
+
+Update architectural information for developers:
+- Design decisions and trade-offs
+- Implementation details
+- Flag names, struct definitions
+- Integration points
+
+### README.md
+
+Update user-facing documentation:
+- Command usage and examples
+- Flag descriptions
+- Configuration file formats
+- Expected behavior
+
+<Tip>
+Keep documentation style consistent with existing commands. Explain *why*, not just *what*.
+</Tip>
+
+## Getting Help
+
+If you need assistance:
+
+- Check existing documentation and issues
+- Ask questions in your PR or issue
+- Review CLAUDE.md for architectural guidance
+- Look at similar existing features for patterns
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Building" icon="hammer" href="/development/building">
+    Learn how to build check-image from source
+  </Card>
+  
+  <Card title="Testing" icon="flask" href="/development/testing">
+    Run tests and validate your changes
+  </Card>
+  
+  <Card title="Architecture" icon="sitemap" href="/development/architecture">
+    Understand the project structure
+  </Card>
+  
+  <Card title="CI/CD" icon="rocket" href="/development/ci-cd">
+    Learn about automated workflows
+  </Card>
+</CardGroup>

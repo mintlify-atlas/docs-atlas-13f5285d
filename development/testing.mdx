@@ -1,0 +1,354 @@
+---
+title: Running Tests
+description: How to run tests and measure coverage in check-image
+---
+
+## Overview
+
+check-image has comprehensive unit tests with **92.1% overall coverage**. All tests are deterministic, fast, and run without requiring Docker daemon, registry access, or network connectivity.
+
+## Running Tests
+
+### Run All Tests
+
+```bash
+go test ./...
+```
+
+### Run with Verbose Output
+
+```bash
+go test ./... -v
+```
+
+### Run with Race Detection
+
+```bash
+go test ./... -race
+```
+
+Race detection finds data race conditions in concurrent code.
+
+### Run with Coverage
+
+```bash
+go test ./... -cover
+```
+
+Output shows coverage percentage for each package:
+
+```
+ok      github.com/jarfernandez/check-image/cmd/check-image             0.123s  coverage: 60.0% of statements
+ok      github.com/jarfernandez/check-image/cmd/check-image/commands    0.456s  coverage: 91.0% of statements
+ok      github.com/jarfernandez/check-image/internal/fileutil           0.089s  coverage: 89.7% of statements
+```
+
+### Run Specific Package Tests
+
+```bash
+# Test imageutil package
+go test ./internal/imageutil -v
+
+# Test secrets detection
+go test ./internal/secrets -v
+
+# Test commands
+go test ./cmd/check-image/commands -v
+```
+
+### Run Specific Test Functions
+
+```bash
+# Run a single test
+go test ./internal/imageutil -run TestParseReference
+
+# Run tests matching a pattern
+go test ./internal/secrets -run TestCheck
+```
+
+## Coverage Reports
+
+### Generate Coverage Profile
+
+```bash
+go test ./... -coverprofile=coverage.out
+```
+
+### View Coverage in Browser
+
+```bash
+go tool cover -html=coverage.out
+```
+
+Opens an HTML report showing which lines are covered.
+
+### View Coverage by Function
+
+```bash
+go tool cover -func=coverage.out
+```
+
+Output:
+
+```
+github.com/jarfernandez/check-image/internal/version/version.go:10:  GetBuildInfo          100.0%
+github.com/jarfernandez/check-image/internal/imageutil/auth.go:15:   SetStaticCredentials   90.0%
+...
+total:                                                                (statements)           92.1%
+```
+
+### Coverage by Package
+
+Current coverage statistics:
+
+| Package | Coverage |
+|---------|----------|
+| `internal/version` | 100.0% |
+| `internal/output` | 100.0% |
+| `internal/labels` | 100.0% |
+| `internal/registry` | 100.0% |
+| `internal/secrets` | 96.4% |
+| `cmd/check-image/commands` | 91.0% |
+| `internal/fileutil` | 89.7% |
+| `internal/imageutil` | 81.8% |
+| `cmd/check-image` | 60.0% |
+| **Overall** | **92.1%** |
+
+## Test Patterns
+
+### Table-Driven Tests
+
+Most tests use table-driven patterns for multiple scenarios:
+
+```go
+func TestParseReference(t *testing.T) {
+    tests := []struct {
+        name      string
+        input     string
+        wantType  TransportType
+        wantPath  string
+        wantTag   string
+        wantError bool
+    }{
+        {
+            name:     "OCI layout with tag",
+            input:    "oci:/path/to/layout:latest",
+            wantType: OCILayout,
+            wantPath: "/path/to/layout",
+            wantTag:  "latest",
+        },
+        // ... more test cases
+    }
+
+    for _, tt := range tests {
+        t.Run(tt.name, func(t *testing.T) {
+            ref, err := ParseReference(tt.input)
+            if tt.wantError {
+                assert.Error(t, err)
+                return
+            }
+            assert.NoError(t, err)
+            assert.Equal(t, tt.wantType, ref.Transport)
+            assert.Equal(t, tt.wantPath, ref.Path)
+            assert.Equal(t, tt.wantTag, ref.Tag)
+        })
+    }
+}
+```
+
+### In-Memory Images
+
+Tests use in-memory images from `github.com/google/go-containerregistry`:
+
+```go
+import (
+    v1 "github.com/google/go-containerregistry/pkg/v1"
+    "github.com/google/go-containerregistry/pkg/v1/random"
+)
+
+func TestImageValidation(t *testing.T) {
+    // Create random test image
+    img, err := random.Image(1024, 3)
+    require.NoError(t, err)
+
+    // Test validation logic
+    result, err := validateImage(img)
+    assert.NoError(t, err)
+    assert.True(t, result.Passed)
+}
+```
+
+### Temporary Directories
+
+For filesystem operations:
+
+```go
+func TestOCILayout(t *testing.T) {
+    tmpDir := t.TempDir() // Automatically cleaned up
+
+    // Create OCI layout structure
+    layoutPath := filepath.Join(tmpDir, "layout")
+    err := os.MkdirAll(layoutPath, 0755)
+    require.NoError(t, err)
+
+    // Test OCI layout loading
+    img, cleanup, err := GetOCILayoutImage(layoutPath + ":latest")
+    require.NoError(t, err)
+    defer cleanup()
+}
+```
+
+### Assertions with Testify
+
+Tests use `github.com/stretchr/testify` for readable assertions:
+
+```go
+import (
+    "github.com/stretchr/testify/assert"
+    "github.com/stretchr/testify/require"
+)
+
+func TestValidation(t *testing.T) {
+    // require stops test on failure
+    img, err := loadImage("test.tar")
+    require.NoError(t, err)
+
+    // assert continues test on failure
+    assert.NotNil(t, img)
+    assert.Equal(t, "linux/amd64", img.Platform)
+    assert.Contains(t, img.Labels, "version")
+}
+```
+
+## Test Requirements
+
+### For New Features
+
+Every new feature must include:
+
+1. **Complete unit tests** covering all code paths
+2. **Table-driven tests** for multiple input scenarios
+3. **Error cases** testing failure conditions
+4. **Edge cases** testing boundary conditions
+5. **Coverage** maintaining or improving overall coverage
+
+### Test Characteristics
+
+**Tests must be:**
+- **Deterministic**: Same input always produces same output
+- **Fast**: Complete test suite runs in seconds
+- **Isolated**: No Docker daemon, registry, or network required
+- **Repeatable**: Can run multiple times without side effects
+- **Clear**: Test names describe what is being tested
+
+**Tests must not:**
+- Require external services (Docker, registries)
+- Depend on network connectivity
+- Modify system state outside temp directories
+- Depend on execution order
+- Use sleeps or timeouts (except for race testing)
+
+## Continuous Integration
+
+Tests run automatically in CI on every pull request:
+
+**Platforms tested:**
+- Ubuntu (Linux)
+- macOS
+- Windows
+
+**CI test command:**
+```bash
+go test ./... -race -coverprofile=coverage.out -covermode=atomic
+```
+
+Coverage is uploaded to Codecov from Ubuntu runners.
+
+## Test Coverage Goals
+
+When adding or modifying code:
+
+1. **Run full test suite** to ensure nothing breaks:
+   ```bash
+   go test ./...
+   ```
+
+2. **Check coverage** for your changes:
+   ```bash
+   go test ./... -coverprofile=coverage.out
+   go tool cover -func=coverage.out
+   ```
+
+3. **Update coverage stats** in documentation if changed:
+   - Overall coverage in `CLAUDE.md`
+   - Per-package breakdown in `README.md`
+
+4. **Maintain or improve** overall coverage (target: 92%+)
+
+<Info>
+Focus on testing behavior, not implementation details. Tests should verify what the code does, not how it does it.
+</Info>
+
+## Pre-Commit Testing
+
+Tests run automatically via pre-commit hooks:
+
+```bash
+# Runs on every commit
+git commit -m "feat: Add feature"
+
+# Manually run test hook
+pre-commit run go-test-mod
+
+# Run all pre-commit checks
+pre-commit run --all-files
+```
+
+The `go-test-mod` hook runs `go test ./...` before allowing commits.
+
+## Troubleshooting
+
+### Tests Fail Locally But Pass in CI
+
+- Ensure dependencies are up to date: `go mod download`
+- Check for platform-specific issues
+- Verify Go version matches CI (1.26)
+
+### Race Detector Failures
+
+Race detection finds concurrency bugs:
+
+```bash
+go test ./... -race
+```
+
+Fix any reported data races before committing.
+
+### Coverage Decreases
+
+If coverage drops:
+
+1. Identify uncovered lines:
+   ```bash
+   go test ./... -coverprofile=coverage.out
+   go tool cover -html=coverage.out
+   ```
+
+2. Add tests for uncovered code paths
+
+3. Verify tests are running:
+   ```bash
+   go test ./... -v
+   ```
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Architecture" icon="sitemap" href="/development/architecture">
+    Understand the codebase structure
+  </Card>
+  
+  <Card title="CI/CD" icon="rocket" href="/development/ci-cd">
+    Learn about automated pipelines
+  </Card>
+</CardGroup>

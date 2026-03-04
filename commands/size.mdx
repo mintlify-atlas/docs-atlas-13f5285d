@@ -1,0 +1,290 @@
+---
+title: size
+description: Validate container image size and layer count
+---
+
+The `size` command validates that a container image's total size and number of layers are within acceptable limits. This helps control image bloat and optimize container startup time.
+
+## Usage
+
+```bash
+check-image size <image> [flags]
+```
+
+## Description
+
+The `size` command calculates the total uncompressed size of all image layers and counts the number of layers. Both metrics are validated against configurable thresholds.
+
+This check helps:
+- Control image bloat and disk usage
+- Optimize container startup time
+- Reduce network transfer time
+- Identify images that need optimization
+- Enforce layer count limits (Docker has a 127 layer maximum)
+
+## Flags
+
+<ParamField path="--max-size" type="uint" default="500">
+  Maximum image size in megabytes (MB). Images larger than this value will fail validation.
+  
+  Short form: `-m`
+</ParamField>
+
+<ParamField path="--max-layers" type="uint" default="20">
+  Maximum number of layers. Images with more layers will fail validation.
+  
+  Short form: `-y`
+</ParamField>
+
+<ParamField path="--output" type="string" default="text">
+  Output format: `text` or `json`
+  
+  Short form: `-o`
+</ParamField>
+
+<ParamField path="--color" type="string" default="auto">
+  Color output mode: `auto`, `always`, `never`
+</ParamField>
+
+<ParamField path="--log-level" type="string" default="info">
+  Set log level: trace, debug, info, warn, error, fatal, panic
+</ParamField>
+
+## Examples
+
+### Basic usage with default limits
+
+```bash
+check-image size nginx:latest
+```
+
+### Custom size and layer limits
+
+```bash
+check-image size nginx:latest --max-size 300 --max-layers 15
+```
+
+### Strict limits for production
+
+```bash
+check-image size myapp:prod --max-size 100 --max-layers 10
+```
+
+### Check OCI layout
+
+```bash
+check-image size oci:/path/to/layout:1.0 --max-size 200
+```
+
+### JSON output
+
+```bash
+check-image size nginx:latest -o json
+```
+
+## Output
+
+### Text Format
+
+When validation passes:
+```
+✓ Image size is within the allowed limit of 500 MB
+
+Details:
+  Total Size: 187.45 MB (196,534,123 bytes)
+  Max Size: 500 MB
+  Layer Count: 6
+  Max Layers: 20
+
+  Layers:
+    Layer 1: 78.23 MB
+    Layer 2: 45.12 MB
+    Layer 3: 32.10 MB
+    Layer 4: 15.67 MB
+    Layer 5: 10.33 MB
+    Layer 6: 6.00 MB
+```
+
+When validation fails (size):
+```
+✗ Image size exceeds the recommended limit of 200 MB
+
+Details:
+  Total Size: 387.45 MB (406,234,789 bytes)
+  Max Size: 200 MB
+  Layer Count: 8
+  Max Layers: 20
+```
+
+When validation fails (layers):
+```
+✗ Image has more than 15 layers
+
+Details:
+  Total Size: 187.45 MB (196,534,123 bytes)
+  Max Size: 500 MB
+  Layer Count: 22
+  Max Layers: 15
+```
+
+When validation fails (both):
+```
+✗ Image has more than 15 layers and size exceeds the recommended limit of 200 MB
+```
+
+### JSON Format
+
+```json
+{
+  "check": "size",
+  "image": "nginx:latest",
+  "passed": true,
+  "message": "Image size is within the allowed limit of 500 MB",
+  "details": {
+    "total-bytes": 196534123,
+    "total-mb": 187.45,
+    "max-size-mb": 500,
+    "layer-count": 6,
+    "max-layers": 20,
+    "layers": [
+      {"index": 1, "bytes": 82034567},
+      {"index": 2, "bytes": 47321098},
+      {"index": 3, "bytes": 33654789},
+      {"index": 4, "bytes": 16432105},
+      {"index": 5, "bytes": 10834567},
+      {"index": 6, "bytes": 6256997}
+    ]
+  }
+}
+```
+
+## Exit Codes
+
+| Code | Meaning | Example |
+|------|---------|------|
+| 0 | Image size and layers within limits | 187 MB with 6 layers, limits are 500 MB and 20 layers |
+| 1 | Image exceeds size or layer limit | 600 MB image with max-size 500 |
+| 2 | Execution error | Image not found, invalid flag value |
+
+## Configuration
+
+When using the `all` command, configure size validation in your config file:
+
+<CodeGroup>
+```yaml YAML
+checks:
+  size:
+    max-size: 300
+    max-layers: 15
+```
+
+```json JSON
+{
+  "checks": {
+    "size": {
+      "max-size": 300,
+      "max-layers": 15
+    }
+  }
+}
+```
+</CodeGroup>
+
+## Implementation Details
+
+- Calculates uncompressed size (not registry compressed size)
+- Counts all layers in the image (including base image layers)
+- Size is the sum of all layer sizes in bytes
+- Validates both size and layer count independently
+- Fails if either limit is exceeded
+- Includes per-layer size breakdown in details
+
+## Common Issues
+
+### Large images
+
+Images exceeding size limits often have these causes:
+
+```
+✗ Image size exceeds the recommended limit of 500 MB
+```
+
+**Common causes**:
+- Build artifacts or caches not cleaned up
+- Development tools included in production image
+- Large dependencies or data files
+- Missing `.dockerignore` file
+
+**Solutions**:
+- Use multi-stage builds to exclude build dependencies
+- Clean up package manager caches (`apt-get clean`, `yum clean all`)
+- Use smaller base images (alpine, distroless)
+- Add proper `.dockerignore` entries
+
+### Too many layers
+
+```
+✗ Image has more than 20 layers
+```
+
+**Common causes**:
+- Each `RUN`, `COPY`, `ADD` creates a new layer
+- Not combining related commands
+- Deep inheritance chain (many `FROM` statements)
+
+**Solutions**:
+- Combine related `RUN` commands with `&&`
+- Use multi-stage builds to reduce final layer count
+- Flatten images if necessary
+
+## Best Practices
+
+<Check>Set size limits based on your deployment environment (smaller for edge, larger for datacenter)</Check>
+<Check>Keep layer count under 20 for most applications</Check>
+<Check>Use multi-stage builds to reduce final image size</Check>
+<Check>Regularly audit layer contents with `docker history`</Check>
+<Check>Use `.dockerignore` to exclude unnecessary files</Check>
+
+<Warning>The 127 layer hard limit in Docker is rarely hit but still exists - keep well under this limit</Warning>
+
+## Optimization Tips
+
+### Combine RUN commands
+
+**Before** (6 layers):
+```dockerfile
+RUN apt-get update
+RUN apt-get install -y package1
+RUN apt-get install -y package2
+RUN apt-get clean
+RUN rm -rf /var/lib/apt/lists/*
+```
+
+**After** (1 layer):
+```dockerfile
+RUN apt-get update && \
+    apt-get install -y package1 package2 && \
+    apt-get clean && \
+    rm -rf /var/lib/apt/lists/*
+```
+
+### Use multi-stage builds
+
+```dockerfile
+# Build stage (large)
+FROM golang:1.26 AS builder
+WORKDIR /app
+COPY . .
+RUN go build -o myapp
+
+# Final stage (small)
+FROM alpine:latest
+COPY --from=builder /app/myapp /usr/local/bin/
+CMD ["myapp"]
+```
+
+## Related Commands
+
+- [`all`](/commands/all) - Run all checks including size validation
+- [`age`](/commands/age) - Validate image age
+- [`platform`](/commands/platform) - Validate image platform

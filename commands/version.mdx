@@ -1,0 +1,142 @@
+---
+title: version
+description: Show the check-image version
+---
+
+## Description
+
+Shows the check-image version with full build information including version, commit hash, build date, Go version, and platform.
+
+## Command Syntax
+
+```bash
+check-image version [flags]
+```
+
+## Flags
+
+| Flag | Type | Default | Description |
+|------|------|---------|-------------|
+| `--short` | bool | `false` | Print only the version number |
+| `--output` / `-o` | string | `text` | Output format: `text` or `json` |
+
+## Usage Examples
+
+### Full Version Information
+
+```bash
+check-image version
+```
+
+### Short Version
+
+```bash
+check-image version --short
+```
+
+### JSON Output (Full)
+
+```bash
+check-image version -o json
+```
+
+### JSON Output (Short)
+
+```bash
+check-image version --short -o json
+```
+
+## Example Output
+
+### Text Format (Full)
+
+```
+check-image version v0.19.4
+commit:     a1b2c3d
+built at:   2026-02-18T12:34:56Z
+go version: go1.26.0
+platform:   linux/amd64
+```
+
+### Text Format (Short)
+
+```
+v0.19.4
+```
+
+### JSON Format (Full)
+
+```json
+{
+  "version": "v0.19.4",
+  "commit": "a1b2c3d",
+  "built-at": "2026-02-18T12:34:56Z",
+  "go-version": "go1.26.0",
+  "platform": "linux/amd64"
+}
+```
+
+### JSON Format (Short)
+
+```json
+{
+  "version": "v0.19.4"
+}
+```
+
+## Build Information
+
+### Version Components
+
+| Field | Description | Example | Injection Method |
+|-------|-------------|---------|------------------|
+| `version` | Semantic version string | `v0.19.4` | ldflags at build time |
+| `commit` | Git commit hash (7 chars) | `a1b2c3d` | ldflags at build time |
+| `built-at` | Build timestamp (RFC3339 UTC) | `2026-02-18T12:34:56Z` | ldflags at build time |
+| `go-version` | Go compiler version | `go1.26.0` | Read from `runtime.Version()` |
+| `platform` | OS/Architecture | `linux/amd64` | Read from `runtime.GOOS`/`runtime.GOARCH` |
+
+### Version Injection
+
+Version and build metadata are injected at build time using ldflags:
+
+```bash
+go build \
+  -ldflags "-X github.com/jarfernandez/check-image/internal/version.Version=v0.1.0 \
+            -X github.com/jarfernandez/check-image/internal/version.Commit=abc1234 \
+            -X github.com/jarfernandez/check-image/internal/version.BuildDate=2026-02-18T12:34:56Z" \
+  ./cmd/check-image
+```
+
+### Development Builds
+
+Binaries built without version injection will show:
+- Version: `dev`
+- Commit: `none`
+- Build Date: `unknown`
+
+This is expected for:
+- `go install` builds from source
+- Local development builds with `go build`
+
+### Release Builds
+
+Pre-built binaries from [GitHub Releases](https://github.com/jarfernandez/check-image/releases) include correct version information:
+- Version: semantic version tag (e.g., `v0.19.4`)
+- Commit: 7-character Git SHA (e.g., `a1b2c3d`)
+- Build Date: RFC3339 UTC timestamp
+
+## Exit Codes
+
+| Exit Code | Meaning |
+|-----------|---------|
+| 0 | Version displayed successfully |
+| 2 | Execution error (should not occur) |
+
+## Notes
+
+- The `version` command takes no positional arguments.
+- Version information is always available, even when no Docker daemon or registry access is present.
+- Go version and platform are read from the Go runtime and do not require ldflags injection.
+- GoReleaser automatically injects version information during release builds using template variables `{{.ShortCommit}}` and `{{.Date}}`.
+- Docker images use build args (`VERSION`, `COMMIT`, `BUILD_DATE`) to inject version information.

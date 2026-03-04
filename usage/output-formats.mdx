@@ -1,0 +1,558 @@
+---
+title: Output Formats
+description: Control output format, color modes, and understand exit codes
+---
+
+Check Image supports multiple output formats and color modes to suit different use cases, from interactive terminal use to CI/CD pipelines and programmatic parsing.
+
+## Output Formats
+
+Check Image supports two output formats controlled by the `--output` (or `-o`) flag:
+
+<CardGroup cols={2}>
+  <Card title="Text (Default)" icon="terminal">
+    Human-readable output with colors and formatting for terminal use.
+  </Card>
+  <Card title="JSON" icon="brackets-curly">
+    Machine-readable JSON for scripting and programmatic parsing.
+  </Card>
+</CardGroup>
+
+### Text Output
+
+Text output is designed for human readability with colored status indicators, structured information, and clear error messages.
+
+<CodeGroup>
+```bash Basic text output
+check-image age nginx:latest --max-age 90
+```
+
+```bash Explicit text format
+check-image size nginx:latest --max-size 100 --output text
+check-image root-user nginx:latest -o text
+```
+</CodeGroup>
+
+**Example Output:**
+
+```
+Checking age of image nginx:latest
+Image creation date: 2026-02-04T23:53:09Z
+Image age: 28 days
+✓ Image is less than 90 days old
+Validation succeeded
+```
+
+<Tabs>
+  <Tab title="Success">
+    ```
+    Checking if image nginx:latest is configured to run as a non-root user
+    ✓ Image runs as non-root user
+    Validation succeeded
+    ```
+  </Tab>
+  
+  <Tab title="Failure">
+    ```
+    Checking if image nginx:latest is configured to run as a non-root user
+    ✗ Image runs as root user
+    Validation failed
+    ```
+  </Tab>
+  
+  <Tab title="Error">
+    ```
+    Error retrieving the remote image: manifest unknown
+    ✗ Execution error
+    ```
+  </Tab>
+</Tabs>
+
+### JSON Output
+
+JSON output provides structured data for scripting, automation, and integration with other tools.
+
+<CodeGroup>
+```bash Basic JSON output
+check-image age nginx:latest --max-age 90 --output json
+check-image size nginx:latest --max-size 100 -o json
+```
+
+```bash Pipe to jq
+check-image age nginx:latest -o json | jq '.details."age-days"'
+```
+</CodeGroup>
+
+**Example JSON Output:**
+
+<Tabs>
+  <Tab title="Age Check">
+    ```json
+    {
+      "check": "age",
+      "image": "nginx:latest",
+      "passed": true,
+      "message": "Image is less than 90 days old",
+      "details": {
+        "created-at": "2025-12-01T00:00:00Z",
+        "age-days": 75,
+        "max-age": 90
+      }
+    }
+    ```
+  </Tab>
+  
+  <Tab title="Size Check">
+    ```json
+    {
+      "check": "size",
+      "image": "nginx:latest",
+      "passed": true,
+      "message": "Image size is acceptable",
+      "details": {
+        "total-bytes": 67108864,
+        "total-mb": 64.0,
+        "max-size-mb": 100,
+        "layer-count": 7,
+        "max-layers": 20,
+        "layers": [
+          {"index": 1, "bytes": 27155431},
+          {"index": 2, "bytes": 25252352},
+          {"index": 3, "bytes": 627}
+        ]
+      }
+    }
+    ```
+  </Tab>
+  
+  <Tab title="All Command">
+    ```json
+    {
+      "image": "nginx:latest",
+      "passed": false,
+      "checks": [
+        {
+          "check": "age",
+          "image": "nginx:latest",
+          "passed": true,
+          "message": "Image is less than 90 days old",
+          "details": {
+            "created-at": "2026-02-04T23:53:09Z",
+            "age-days": 15.975077092155601,
+            "max-age": 90
+          }
+        },
+        {
+          "check": "root-user",
+          "image": "nginx:latest",
+          "passed": false,
+          "message": "Image runs as root user",
+          "details": {
+            "user": ""
+          }
+        }
+      ],
+      "summary": {
+        "total": 8,
+        "passed": 5,
+        "failed": 3,
+        "errored": 0,
+        "skipped": ["registry", "labels"]
+      }
+    }
+    ```
+  </Tab>
+  
+  <Tab title="Version">
+    ```json
+    {
+      "version": "v0.19.4",
+      "commit": "a1b2c3d",
+      "built-at": "2026-02-18T12:34:56Z",
+      "go-version": "go1.26.0",
+      "platform": "linux/amd64"
+    }
+    ```
+  </Tab>
+</Tabs>
+
+<Note>
+  All JSON keys use kebab-case (e.g., `age-days`, `max-size-mb`, `created-at`) for consistency across the tool.
+</Note>
+
+### JSON Schema
+
+All JSON output follows a consistent schema:
+
+<Accordion title="CheckResult Schema">
+  ```typescript
+  interface CheckResult {
+    check: string;           // Check name (e.g., "age", "size")
+    image: string;           // Image reference
+    passed: boolean;         // Validation result
+    message: string;         // Human-readable message
+    details?: object;        // Check-specific details
+    error?: string;          // Error message (if execution failed)
+  }
+  ```
+</Accordion>
+
+<Accordion title="AllResult Schema">
+  ```typescript
+  interface AllResult {
+    image: string;           // Image reference
+    passed: boolean;         // Overall validation result
+    checks: CheckResult[];   // Array of individual check results
+    summary: {
+      total: number;         // Total checks attempted
+      passed: number;        // Number of checks passed
+      failed: number;        // Number of checks failed
+      errored: number;       // Number of checks that errored
+      skipped?: string[];    // Names of skipped checks
+    };
+  }
+  ```
+</Accordion>
+
+## Color Modes
+
+Color output is controlled by the `--color` flag and only applies to text output.
+
+<ParamField path="--color" type="string" default="auto">
+  Color output mode: `auto`, `always`, or `never`.
+</ParamField>
+
+### Auto Mode (Default)
+
+Automatically detects whether stdout is a terminal and respects environment variables.
+
+```bash
+check-image age nginx:latest --color auto
+```
+
+**Auto mode behavior:**
+
+<Steps>
+  <Step title="Terminal Detection">
+    Colors are enabled if stdout is a TTY (interactive terminal).
+  </Step>
+  
+  <Step title="NO_COLOR Environment Variable">
+    If `NO_COLOR` is set (any non-empty value), colors are disabled.
+  </Step>
+  
+  <Step title="CLICOLOR_FORCE Environment Variable">
+    If `CLICOLOR_FORCE=1`, colors are enabled even in non-TTY environments.
+  </Step>
+</Steps>
+
+<CodeGroup>
+```bash Interactive terminal (colors enabled)
+check-image age nginx:latest
+```
+
+```bash Redirected output (colors disabled)
+check-image age nginx:latest > output.txt
+cat output.txt
+```
+
+```bash Piped output (colors disabled)
+check-image age nginx:latest | tee output.txt
+```
+
+```bash NO_COLOR set (colors disabled)
+NO_COLOR=1 check-image age nginx:latest
+```
+
+```bash CLICOLOR_FORCE set (colors enabled)
+CLICOLOR_FORCE=1 check-image age nginx:latest > output.txt
+```
+</CodeGroup>
+
+### Always Mode
+
+Forces color output regardless of terminal detection.
+
+```bash
+check-image age nginx:latest --color always
+```
+
+<Warning>
+  Even with `--color always`, the `NO_COLOR` environment variable is still respected for [no-color.org](https://no-color.org/) compliance.
+</Warning>
+
+<CodeGroup>
+```bash Force colors in pipe
+check-image age nginx:latest --color always | less -R
+```
+
+```bash Force colors in redirect
+check-image age nginx:latest --color always > output.txt
+cat output.txt  # Shows ANSI color codes
+```
+
+```bash NO_COLOR overrides always
+NO_COLOR=1 check-image age nginx:latest --color always  # No colors
+```
+</CodeGroup>
+
+### Never Mode
+
+Disables color output completely.
+
+```bash
+check-image age nginx:latest --color never
+```
+
+<CodeGroup>
+```bash Plain text output
+check-image age nginx:latest --color never
+```
+
+```bash In CI/CD pipelines
+check-image all nginx:latest --color never --output text
+```
+</CodeGroup>
+
+<Tip>
+  Use `--color never` in CI/CD logs for cleaner, grep-friendly output without ANSI escape codes.
+</Tip>
+
+## Exit Codes
+
+Check Image uses exit codes to indicate the result of validation:
+
+<ResponseField name="Exit Code 0" type="Success">
+  Validation succeeded or no checks ran (skipped).
+</ResponseField>
+
+<ResponseField name="Exit Code 1" type="Validation Failed">
+  One or more checks failed validation (image does not meet requirements).
+</ResponseField>
+
+<ResponseField name="Exit Code 2" type="Execution Error">
+  Tool encountered an error and could not complete validation (invalid config, image not found, etc.).
+</ResponseField>
+
+### Exit Code Examples
+
+<Tabs>
+  <Tab title="Exit 0 (Success)">
+    ```bash
+    check-image age nginx:latest --max-age 90
+    echo $?  # Output: 0
+    ```
+    
+    Image is less than 90 days old → validation succeeded.
+  </Tab>
+  
+  <Tab title="Exit 1 (Failed)">
+    ```bash
+    check-image root-user nginx:latest
+    echo $?  # Output: 1
+    ```
+    
+    Image runs as root → validation failed.
+  </Tab>
+  
+  <Tab title="Exit 2 (Error)">
+    ```bash
+    check-image age nonexistent:latest
+    echo $?  # Output: 2
+    ```
+    
+    Image not found → execution error.
+  </Tab>
+</Tabs>
+
+### Exit Code Precedence
+
+In the `all` command, if multiple checks produce different results, the exit code follows this priority:
+
+<Steps>
+  <Step title="Execution Error (Exit 2) - Highest Priority">
+    If any check encounters an execution error, exit code 2 is returned.
+  </Step>
+  
+  <Step title="Validation Failed (Exit 1)">
+    If one or more checks fail validation but no execution errors occur, exit code 1 is returned.
+  </Step>
+  
+  <Step title="Validation Succeeded (Exit 0)">
+    If all checks pass, exit code 0 is returned.
+  </Step>
+  
+  <Step title="Validation Skipped (Exit 0) - Lowest Priority">
+    If no checks ran, exit code 0 is returned.
+  </Step>
+</Steps>
+
+```bash Example: Mixed results
+check-image all nginx:latest --skip registry,labels
+# 6 checks passed, 2 checks failed, 0 errors → Exit 1
+
+check-image all nginx:latest --registry-policy invalid.json
+# Some checks passed, some failed, 1 execution error → Exit 2
+```
+
+### Using Exit Codes in Scripts
+
+<CodeGroup>
+```bash Basic error handling
+if check-image age nginx:latest --max-age 30; then
+    echo "Image is fresh"
+else
+    echo "Image is too old or validation failed"
+fi
+```
+
+```bash Detailed error handling
+check-image age nginx:latest --max-age 30
+exit_code=$?
+
+case $exit_code in
+    0) echo "Validation succeeded" ;;
+    1) echo "Validation failed" ;;
+    2) echo "Execution error" ;;
+    *) echo "Unexpected exit code: $exit_code" ;;
+esac
+```
+
+```bash CI/CD pipeline
+set -e  # Exit on error
+check-image all ghcr.io/myorg/app:${{ github.sha }} \
+    --config .check-image/config.yaml
+echo "Image validation passed"
+```
+
+```bash Conditional deployment
+if check-image all myapp:latest --config prod-policy.yaml; then
+    echo "Deploying to production..."
+    kubectl apply -f deployment.yaml
+else
+    echo "Image validation failed, deployment aborted"
+    exit 1
+fi
+```
+</CodeGroup>
+
+## Output Redirection
+
+Check Image writes different types of output to different streams:
+
+<Accordion title="Standard Output (stdout)">
+  - Text output (validation results)
+  - JSON output
+  - Final status messages ("Validation succeeded", "Validation failed")
+</Accordion>
+
+<Accordion title="Standard Error (stderr)">
+  - Log messages (controlled by `--log-level`)
+  - Error details
+  - Warnings
+</Accordion>
+
+<CodeGroup>
+```bash Redirect output to file
+check-image age nginx:latest > validation-results.txt
+```
+
+```bash Redirect both stdout and stderr
+check-image age nginx:latest > validation.log 2>&1
+```
+
+```bash Separate logs from output
+check-image age nginx:latest > results.txt 2> logs.txt
+```
+
+```bash JSON to file, logs to terminal
+check-image age nginx:latest -o json > results.json
+```
+
+```bash Silence logs, keep output
+check-image age nginx:latest --log-level error
+```
+</CodeGroup>
+
+## Log Levels
+
+Control verbosity of diagnostic logging with the `--log-level` flag:
+
+<ParamField path="--log-level" type="string" default="info">
+  Log level: `trace`, `debug`, `info`, `warn`, `error`, `fatal`, `panic`.
+</ParamField>
+
+<CodeGroup>
+```bash Info level (default)
+check-image age nginx:latest --log-level info
+```
+
+```bash Debug level (verbose)
+check-image age nginx:latest --log-level debug
+```
+
+```bash Error level (minimal)
+check-image age nginx:latest --log-level error
+```
+</CodeGroup>
+
+<Tip>
+  Use `--log-level debug` when troubleshooting authentication or image retrieval issues.
+</Tip>
+
+## Best Practices
+
+<CardGroup cols={2}>
+  <Card title="Use JSON in CI/CD" icon="code">
+    JSON output is ideal for automated parsing, reporting, and integration with other tools.
+    
+    ```bash
+    check-image all $IMAGE -o json > results.json
+    jq '.summary' results.json
+    ```
+  </Card>
+  
+  <Card title="Use text for terminals" icon="terminal">
+    Text output with colors provides better readability for interactive use and debugging.
+    
+    ```bash
+    check-image age nginx:latest --output text
+    ```
+  </Card>
+  
+  <Card title="Disable colors in CI/CD" icon="circle-xmark">
+    Use `--color never` in CI/CD logs to avoid ANSI escape codes in log files.
+    
+    ```bash
+    check-image all $IMAGE --color never
+    ```
+  </Card>
+  
+  <Card title="Check exit codes" icon="check">
+    Always check exit codes in scripts to distinguish between validation failures and execution errors.
+    
+    ```bash
+    if ! check-image all $IMAGE; then
+        echo "Validation failed"
+        exit 1
+    fi
+    ```
+  </Card>
+</CardGroup>
+
+## Related Topics
+
+<CardGroup cols={2}>
+  <Card title="Commands" icon="bolt" href="/commands/overview">
+    Explore all available validation commands
+  </Card>
+  <Card title="Configuration Files" icon="file-code" href="/usage/configuration-files">
+    Understand policy and configuration file formats
+  </Card>
+  <Card title="GitHub Action" icon="github" href="/integrations/github-action">
+    Use Check Image in GitHub Actions workflows
+  </Card>
+  <Card title="CI/CD Integration" icon="circle-nodes" href="/integrations/ci-cd">
+    Integrate Check Image into your CI/CD pipeline
+  </Card>
+</CardGroup>

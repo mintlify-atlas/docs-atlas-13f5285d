@@ -1,0 +1,351 @@
+---
+title: healthcheck
+description: Validate that the image has a healthcheck defined
+---
+
+The `healthcheck` command validates that a container image has a healthcheck defined. Healthchecks allow Docker, Kubernetes, and other orchestrators to monitor container health and restart failed containers automatically.
+
+## Usage
+
+```bash
+check-image healthcheck <image>
+```
+
+## Description
+
+The `healthcheck` command checks if the image configuration includes a healthcheck instruction. It validates that:
+1. A healthcheck section exists in the image configuration
+2. The healthcheck test command is not empty
+3. The healthcheck is not explicitly disabled (`NONE`)
+
+This check helps:
+- Enable automatic container health monitoring
+- Support orchestrator health probes (Docker, Kubernetes)
+- Detect failed or unhealthy containers
+- Improve application reliability
+- Comply with operational best practices
+
+## Flags
+
+<ParamField path="--output" type="string" default="text">
+  Output format: `text` or `json`
+  
+  Short form: `-o`
+</ParamField>
+
+<ParamField path="--color" type="string" default="auto">
+  Color output mode: `auto`, `always`, `never`
+</ParamField>
+
+<ParamField path="--log-level" type="string" default="info">
+  Set log level: trace, debug, info, warn, error, fatal, panic
+</ParamField>
+
+## Examples
+
+### Basic usage
+
+```bash
+check-image healthcheck nginx:latest
+```
+
+### Check custom image
+
+```bash
+check-image healthcheck myapp:latest
+```
+
+### Check OCI layout
+
+```bash
+check-image healthcheck oci:/path/to/layout:1.0
+```
+
+### Check OCI archive
+
+```bash
+check-image healthcheck oci-archive:/path/to/image.tar:latest
+```
+
+### JSON output
+
+```bash
+check-image healthcheck nginx:latest -o json
+```
+
+## Output
+
+### Text Format
+
+When validation passes:
+```
+✓ Image has a healthcheck defined
+
+Details:
+  Has Healthcheck: true
+```
+
+When validation fails:
+```
+✗ Image does not have a healthcheck defined
+
+Details:
+  Has Healthcheck: false
+```
+
+### JSON Format
+
+```json
+{
+  "check": "healthcheck",
+  "image": "nginx:latest",
+  "passed": true,
+  "message": "Image has a healthcheck defined",
+  "details": {
+    "has-healthcheck": true
+  }
+}
+```
+
+Failed validation:
+```json
+{
+  "check": "healthcheck",
+  "image": "myapp:latest",
+  "passed": false,
+  "message": "Image does not have a healthcheck defined",
+  "details": {
+    "has-healthcheck": false
+  }
+}
+```
+
+## Exit Codes
+
+| Code | Meaning | Example |
+|------|---------|------|
+| 0 | Image has a valid healthcheck | HEALTHCHECK CMD curl -f http://localhost/ |
+| 1 | Image has no healthcheck or healthcheck is disabled | No HEALTHCHECK instruction or HEALTHCHECK NONE |
+| 2 | Execution error | Image not found |
+
+## Configuration
+
+When using the `all` command, include `healthcheck` in your config file:
+
+<CodeGroup>
+```yaml YAML
+checks:
+  healthcheck: {}
+```
+
+```json JSON
+{
+  "checks": {
+    "healthcheck": {}
+  }
+}
+```
+</CodeGroup>
+
+The `healthcheck` check has no additional configuration options.
+
+## Implementation Details
+
+- Reads `config.Config.Healthcheck` from the image configuration
+- Passes if healthcheck exists, has non-empty test, and test is not `["NONE"]`
+- Fails if healthcheck is nil, empty, or explicitly disabled
+- Does not validate the healthcheck command syntax
+- Does not test if the healthcheck actually works
+
+## Common Issues
+
+### No healthcheck defined
+
+```
+✗ Image does not have a healthcheck defined
+```
+
+The Dockerfile has no `HEALTHCHECK` instruction.
+
+**Solution**: Add a `HEALTHCHECK` instruction to your Dockerfile:
+
+```dockerfile
+HEALTHCHECK --interval=30s --timeout=3s --start-period=5s --retries=3 \
+  CMD curl -f http://localhost/health || exit 1
+```
+
+### Healthcheck explicitly disabled
+
+Some Dockerfiles explicitly disable healthchecks inherited from base images:
+
+```dockerfile
+HEALTHCHECK NONE
+```
+
+**Solution**: Remove `HEALTHCHECK NONE` and define a proper healthcheck.
+
+### Base image has no healthcheck
+
+Most official base images don't include healthchecks:
+
+```bash
+check-image healthcheck nginx:latest
+✗ Image does not have a healthcheck defined
+```
+
+**Solution**: Add a healthcheck in your Dockerfile when building on top of the base image.
+
+## Best Practices
+
+<Check>Define healthchecks for all production images</Check>
+<Check>Use lightweight health check commands (avoid heavy operations)</Check>
+<Check>Set appropriate intervals and timeouts for your application</Check>
+<Check>Test healthchecks locally before deploying</Check>
+<Check>Use HTTP endpoints for web applications</Check>
+
+<Warning>Healthchecks run inside the container, so ensure required tools (curl, wget, etc.) are available</Warning>
+
+## Dockerfile Examples
+
+### HTTP health check
+
+```dockerfile
+FROM nginx:latest
+
+# Install curl for healthcheck
+RUN apt-get update && apt-get install -y curl && rm -rf /var/lib/apt/lists/*
+
+# Define healthcheck
+HEALTHCHECK --interval=30s --timeout=3s --start-period=5s --retries=3 \
+  CMD curl -f http://localhost/health || exit 1
+
+COPY nginx.conf /etc/nginx/nginx.conf
+```
+
+### TCP health check
+
+```dockerfile
+FROM postgres:15
+
+# pg_isready is included in the postgres image
+HEALTHCHECK --interval=10s --timeout=5s --start-period=30s --retries=5 \
+  CMD pg_isready -U postgres || exit 1
+```
+
+### Script-based health check
+
+```dockerfile
+FROM node:20-alpine
+
+WORKDIR /app
+
+# Copy healthcheck script
+COPY healthcheck.sh /usr/local/bin/healthcheck.sh
+RUN chmod +x /usr/local/bin/healthcheck.sh
+
+# Define healthcheck
+HEALTHCHECK --interval=15s --timeout=3s --start-period=10s --retries=3 \
+  CMD /usr/local/bin/healthcheck.sh
+
+COPY . .
+RUN npm ci --only=production
+
+USER node
+CMD ["node", "server.js"]
+```
+
+### Application-specific health check
+
+```dockerfile
+FROM myapp:base
+
+# Use application's built-in health endpoint
+HEALTHCHECK --interval=30s --timeout=5s --start-period=20s --retries=3 \
+  CMD /app/myapp health || exit 1
+
+CMD ["/app/myapp", "serve"]
+```
+
+## Healthcheck Parameters
+
+| Parameter | Description | Default |
+|-----------|-------------|------|
+| `--interval` | Time between health checks | 30s |
+| `--timeout` | Maximum time for check to complete | 30s |
+| `--start-period` | Grace period before checks start | 0s |
+| `--retries` | Consecutive failures before marking unhealthy | 3 |
+
+Example with all parameters:
+```dockerfile
+HEALTHCHECK --interval=10s --timeout=5s --start-period=30s --retries=5 \
+  CMD curl -f http://localhost/health || exit 1
+```
+
+## Docker and Kubernetes Integration
+
+### Docker
+
+Docker automatically runs healthchecks and updates container status:
+
+```bash
+# View container health status
+docker ps
+CONTAINER ID   STATUS
+abc123         Up 5 minutes (healthy)
+
+# View healthcheck logs
+docker inspect --format='{{json .State.Health}}' container_id
+```
+
+### Kubernetes
+
+Kubernetes doesn't use Docker healthchecks directly, but you can define similar probes:
+
+```yaml
+apiVersion: v1
+kind: Pod
+metadata:
+  name: myapp
+spec:
+  containers:
+  - name: app
+    image: myapp:latest
+    livenessProbe:  # Similar to Docker HEALTHCHECK
+      httpGet:
+        path: /health
+        port: 8080
+      initialDelaySeconds: 10
+      periodSeconds: 30
+    readinessProbe:
+      httpGet:
+        path: /ready
+        port: 8080
+      initialDelaySeconds: 5
+      periodSeconds: 10
+```
+
+Using `check-image healthcheck` ensures your images have Docker-native health monitoring, which can be useful for local development and Docker Compose deployments.
+
+## Exit Status in Healthcheck Commands
+
+The healthcheck command should:
+- Exit with status `0` if the container is healthy
+- Exit with status `1` (or any non-zero) if the container is unhealthy
+
+```bash
+# Good
+HEALTHCHECK CMD curl -f http://localhost/health || exit 1
+
+# Also good (curl returns non-zero on failure)
+HEALTHCHECK CMD curl -f http://localhost/health
+
+# Explicit exit codes
+HEALTHCHECK CMD /app/healthcheck.sh
+# healthcheck.sh should exit 0 (healthy) or 1 (unhealthy)
+```
+
+## Related Commands
+
+- [`all`](/commands/all) - Run all checks including healthcheck validation
+- [`entrypoint`](/commands/entrypoint) - Validate entrypoint configuration
+- [`root-user`](/commands/root-user) - Validate non-root user configuration

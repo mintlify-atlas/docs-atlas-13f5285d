@@ -1,0 +1,403 @@
+---
+title: 'Docker Integration'
+description: 'Use Check Image with Docker to validate container images'
+icon: 'docker'
+---
+
+## Overview
+
+Check Image is available as a multi-architecture Docker image from GitHub Container Registry. The Docker image allows you to validate container images in any environment that supports Docker, without needing to install the binary locally.
+
+## Docker Image Details
+
+**Registry:** `ghcr.io/jarfernandez/check-image`
+
+**Supported Platforms:**
+- `linux/amd64`
+- `linux/arm64`
+
+**Base Image:** `gcr.io/distroless/static-debian12:nonroot`
+- Minimal distroless image with CA certificates for registry TLS
+- Non-root user (UID 65532)
+- No shell or package manager for enhanced security
+- Read-only filesystem compatible
+
+## Pulling the Image
+
+```bash
+# Pull latest version
+docker pull ghcr.io/jarfernandez/check-image:latest
+
+# Pull specific version
+docker pull ghcr.io/jarfernandez/check-image:0.19.4
+```
+
+## Basic Usage
+
+The Docker image validates remote registry images by default. No Docker socket mount is required:
+
+```bash
+# Check image age
+docker run --rm ghcr.io/jarfernandez/check-image age nginx:latest --max-age 30
+
+# Check image size
+docker run --rm ghcr.io/jarfernandez/check-image size nginx:latest --max-size 100
+
+# Check for root user
+docker run --rm ghcr.io/jarfernandez/check-image root-user nginx:latest
+
+# Run all checks with JSON output
+docker run --rm ghcr.io/jarfernandez/check-image all nginx:latest -o json
+```
+
+## Using Configuration Files
+
+Mount local configuration files into the container using volume mounts:
+
+### Single Policy File
+
+```bash
+# Mount a local config directory (read-only)
+docker run --rm \
+  -v "$(pwd)/config:/config:ro" \
+  ghcr.io/jarfernandez/check-image registry nginx:latest \
+  --registry-policy /config/registry-policy.json
+```
+
+### All Checks with Config File
+
+```bash
+# Run all checks with a config file
+docker run --rm \
+  -v "$(pwd)/config:/config:ro" \
+  ghcr.io/jarfernandez/check-image all nginx:latest \
+  --config /config/config.yaml
+```
+
+### Multiple Policy Files
+
+```bash
+# Mount multiple policy files
+docker run --rm \
+  -v "$(pwd)/policies:/policies:ro" \
+  ghcr.io/jarfernandez/check-image all nginx:latest \
+  --registry-policy /policies/registry-policy.yaml \
+  --labels-policy /policies/labels-policy.json \
+  --secrets-policy /policies/secrets-policy.yaml
+```
+
+## Volume Mount Best Practices
+
+<Warning>
+  Always mount configuration directories as read-only (`:ro`) to prevent accidental modifications from within the container.
+</Warning>
+
+```bash
+# ✓ Good: Read-only mount
+-v "$(pwd)/config:/config:ro"
+
+# ✗ Avoid: Writable mount (unnecessary security risk)
+-v "$(pwd)/config:/config"
+```
+
+## Docker Socket Mounting
+
+By default, Check Image validates remote registry images without requiring access to the Docker daemon. This is the recommended approach for security.
+
+However, you can validate local Docker images by mounting the Docker socket:
+
+<Warning>
+  **Security Warning:** Mounting the Docker socket grants the container full access to the Docker daemon, which is equivalent to root access on the host. Only use this in trusted environments.
+</Warning>
+
+```bash
+# Validate a local image (requires Docker socket)
+docker run --rm \
+  -v /var/run/docker.sock:/var/run/docker.sock \
+  ghcr.io/jarfernandez/check-image age my-local-image:latest --max-age 30
+```
+
+### When to Mount the Docker Socket
+
+**Use Socket Mount:**
+- Validating images that only exist locally (haven't been pushed to a registry)
+- Testing images immediately after `docker build`
+- Working in a local development environment
+
+**Use Remote Registry (No Socket):**
+- CI/CD pipelines (recommended)
+- Production validation workflows
+- Any untrusted or shared environment
+- When security is a priority
+
+## Private Registry Authentication
+
+Check Image supports multiple authentication methods when validating images from private registries.
+
+### Using Environment Variables
+
+```bash
+docker run --rm \
+  -e CHECK_IMAGE_USERNAME=myuser \
+  -e CHECK_IMAGE_PASSWORD=mytoken \
+  ghcr.io/jarfernandez/check-image age my-registry.example.com/private-image:latest
+```
+
+### Using Docker Config
+
+Mount your Docker config file to use existing credentials:
+
+```bash
+# Login to registry on host
+docker login my-registry.example.com
+
+# Mount Docker config into container
+docker run --rm \
+  -v ~/.docker/config.json:/home/nonroot/.docker/config.json:ro \
+  ghcr.io/jarfernandez/check-image age my-registry.example.com/private-image:latest
+```
+
+### GitHub Container Registry (GHCR)
+
+```bash
+# Using Personal Access Token
+docker run --rm \
+  -e CHECK_IMAGE_USERNAME=github-username \
+  -e CHECK_IMAGE_PASSWORD=ghp_your_token_here \
+  ghcr.io/jarfernandez/check-image age ghcr.io/myorg/private-app:latest
+```
+
+## Output Formats
+
+### Text Output (Default)
+
+```bash
+docker run --rm ghcr.io/jarfernandez/check-image age nginx:latest --max-age 30
+```
+
+Output:
+```
+✓ Image is less than 30 days old
+  Created: 2026-02-15 14:23:45
+  Age: 17.3 days
+  Max Age: 30 days
+```
+
+### JSON Output
+
+```bash
+docker run --rm ghcr.io/jarfernandez/check-image age nginx:latest --max-age 30 -o json
+```
+
+Output:
+```json
+{
+  "check": "age",
+  "image": "nginx:latest",
+  "passed": true,
+  "message": "Image is less than 30 days old",
+  "details": {
+    "created-at": "2026-02-15T14:23:45Z",
+    "age-days": 17.3,
+    "max-age": 30
+  }
+}
+```
+
+## Exit Codes
+
+Check Image uses standard exit codes that work seamlessly with Docker:
+
+| Exit Code | Meaning | Example |
+|-----------|---------|----------|
+| 0 | Validation passed | Image meets all criteria |
+| 1 | Validation failed | Image is too old, runs as root, etc. |
+| 2 | Execution error | Invalid config, image not found |
+
+### Using Exit Codes in Scripts
+
+```bash
+#!/bin/bash
+
+docker run --rm ghcr.io/jarfernandez/check-image age nginx:latest --max-age 30
+
+case $? in
+  0)
+    echo "✓ Image validation passed"
+    ;;
+  1)
+    echo "✗ Image validation failed"
+    exit 1
+    ;;
+  2)
+    echo "✗ Execution error"
+    exit 2
+    ;;
+esac
+```
+
+## Complete Example
+
+Here's a complete example that validates an image with multiple checks:
+
+```bash
+#!/bin/bash
+
+# Create config directory
+mkdir -p ./policies
+
+# Create registry policy
+cat > ./policies/registry-policy.yaml << EOF
+trusted-registries:
+  - index.docker.io
+  - ghcr.io
+  - gcr.io
+EOF
+
+# Create labels policy
+cat > ./policies/labels-policy.yaml << EOF
+required-labels:
+  - name: "maintainer"
+  - name: "org.opencontainers.image.version"
+    pattern: "^v?\\d+\\.\\d+\\.\\d+$"
+EOF
+
+# Run validation
+docker run --rm \
+  -v "$(pwd)/policies:/policies:ro" \
+  ghcr.io/jarfernandez/check-image all nginx:latest \
+  --registry-policy /policies/registry-policy.yaml \
+  --labels-policy /policies/labels-policy.yaml \
+  --max-age 30 \
+  --max-size 200 \
+  --skip secrets \
+  -o json
+```
+
+## Version Management
+
+### Using Specific Versions
+
+```bash
+# Pin to specific version in production
+docker run --rm ghcr.io/jarfernandez/check-image:0.19.4 age nginx:latest
+
+# Use major version tag (auto-updates to latest patch)
+docker run --rm ghcr.io/jarfernandez/check-image:0 age nginx:latest
+
+# Use major.minor version tag
+docker run --rm ghcr.io/jarfernandez/check-image:0.19 age nginx:latest
+```
+
+### Checking Version
+
+```bash
+docker run --rm ghcr.io/jarfernandez/check-image version
+```
+
+Output:
+```
+check-image version v0.19.4
+commit:     a1b2c3d
+built at:   2026-02-18T12:34:56Z
+go version: go1.26.0
+platform:   linux/amd64
+```
+
+## Multi-Architecture Support
+
+The Docker image automatically pulls the correct architecture for your platform:
+
+```bash
+# On amd64 (Intel/AMD)
+docker run --rm ghcr.io/jarfernandez/check-image version
+# Uses linux/amd64 image
+
+# On arm64 (Apple Silicon, ARM servers)
+docker run --rm ghcr.io/jarfernandez/check-image version
+# Uses linux/arm64 image
+```
+
+### Specifying Platform Explicitly
+
+```bash
+# Force amd64 platform
+docker run --rm --platform linux/amd64 \
+  ghcr.io/jarfernandez/check-image age nginx:latest
+
+# Force arm64 platform
+docker run --rm --platform linux/arm64 \
+  ghcr.io/jarfernandez/check-image age nginx:latest
+```
+
+## Docker Compose Integration
+
+You can integrate Check Image into your Docker Compose workflows:
+
+```yaml
+version: '3.8'
+
+services:
+  validate-image:
+    image: ghcr.io/jarfernandez/check-image:0.19.4
+    command: |
+      all nginx:latest
+      --config /config/config.yaml
+      -o json
+    volumes:
+      - ./config:/config:ro
+    environment:
+      CHECK_IMAGE_USERNAME: ${REGISTRY_USERNAME}
+      CHECK_IMAGE_PASSWORD: ${REGISTRY_PASSWORD}
+```
+
+Run validation:
+
+```bash
+docker-compose run --rm validate-image
+```
+
+## Troubleshooting
+
+### Image Pull Errors
+
+```bash
+# Verify image exists
+docker manifest inspect ghcr.io/jarfernandez/check-image:latest
+
+# Pull specific architecture
+docker pull --platform linux/amd64 ghcr.io/jarfernandez/check-image:latest
+```
+
+### Permission Errors
+
+```bash
+# Ensure mounted files are readable
+chmod 644 ./config/*.yaml
+
+# Verify volume mount path
+docker run --rm -v "$(pwd)/config:/config:ro" \
+  ghcr.io/jarfernandez/check-image ls /config
+```
+
+### Registry Authentication
+
+```bash
+# Test credentials
+docker run --rm \
+  -e CHECK_IMAGE_USERNAME=myuser \
+  -e CHECK_IMAGE_PASSWORD=mytoken \
+  ghcr.io/jarfernandez/check-image age my-registry.example.com/image:latest \
+  --log-level debug
+```
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="GitHub Actions" icon="github" href="/integrations/github-actions">
+    Integrate Check Image into your GitHub workflows
+  </Card>
+  <Card title="CI/CD Integration" icon="gears" href="/integrations/ci-cd">
+    Use Check Image in GitLab, CircleCI, Jenkins, and more
+  </Card>
+</CardGroup>

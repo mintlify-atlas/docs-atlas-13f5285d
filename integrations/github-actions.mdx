@@ -1,0 +1,634 @@
+---
+title: 'GitHub Actions Integration'
+description: 'Validate container images in GitHub workflows using Check Image action'
+icon: 'github'
+---
+
+## Overview
+
+Check Image is available as a GitHub Action that validates container images directly in your CI/CD workflows. The action downloads the check-image binary from GitHub Releases and runs natively on the GitHub runner, providing full access to the Docker daemon for local image validation.
+
+## Quick Start
+
+```yaml
+name: Validate Image
+
+on: [push, pull_request]
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: jarfernandez/check-image@v0.19.4
+        with:
+          image: nginx:latest
+```
+
+This runs all 10 checks with default settings.
+
+## Action Inputs
+
+All inputs are optional except `image`.
+
+### Required Inputs
+
+| Input | Description | Example |
+|-------|-------------|----------|
+| `image` | Container image to validate | `nginx:latest`, `ghcr.io/org/app:1.0` |
+
+### Configuration Inputs
+
+| Input | Description | Default |
+|-------|-------------|---------|
+| `config` | Path to config file for the `all` command | - |
+| `checks` | Comma-separated list of checks to run (mutually exclusive with `skip`) | - |
+| `skip` | Comma-separated list of checks to skip (mutually exclusive with `checks`) | - |
+| `fail-fast` | Stop on first check failure | `false` |
+
+### Check-Specific Inputs
+
+| Input | Description | Default |
+|-------|-------------|---------|
+| `max-age` | Maximum image age in days | `90` |
+| `max-size` | Maximum image size in MB | `500` |
+| `max-layers` | Maximum number of layers | `20` |
+| `allowed-ports` | Comma-separated allowed ports or `@file` path | - |
+| `allowed-platforms` | Comma-separated allowed platforms or `@file` path | - |
+| `registry-policy` | Path to registry policy file | - |
+| `labels-policy` | Path to labels policy file | - |
+| `secrets-policy` | Path to secrets policy file | - |
+| `skip-env-vars` | Skip environment variable checks in secrets detection | `false` |
+| `skip-files` | Skip file system checks in secrets detection | `false` |
+| `allow-shell-form` | Allow shell form for entrypoint or cmd | `false` |
+
+### Other Inputs
+
+| Input | Description | Default |
+|-------|-------------|---------|
+| `log-level` | Log level (trace, debug, info, warn, error, fatal, panic) | `info` |
+| `version` | check-image version to use | `0.19.4` |
+
+## Action Outputs
+
+The action provides two outputs for use in subsequent workflow steps:
+
+| Output | Description | Values |
+|--------|-------------|---------|
+| `result` | Validation result | `passed`, `failed`, `error` |
+| `json` | Full JSON output from check-image | JSON string |
+
+## Basic Examples
+
+### All Checks (Default)
+
+```yaml
+- uses: jarfernandez/check-image@v0.19.4
+  with:
+    image: nginx:latest
+```
+
+Runs all 10 checks. Checks requiring configuration (registry, labels, platform) will report an error unless their configuration is provided.
+
+### Specific Checks Only
+
+```yaml
+- uses: jarfernandez/check-image@v0.19.4
+  with:
+    image: nginx:latest
+    checks: age,size,root-user
+    max-age: '30'
+    max-size: '200'
+```
+
+### Skip Specific Checks
+
+```yaml
+- uses: jarfernandez/check-image@v0.19.4
+  with:
+    image: nginx:latest
+    skip: secrets,healthcheck
+    max-age: '30'
+```
+
+## Using Configuration Files
+
+### With Config File
+
+```yaml
+steps:
+  - uses: actions/checkout@v4
+  
+  - uses: jarfernandez/check-image@v0.19.4
+    with:
+      image: myorg/myapp:${{ github.sha }}
+      config: .check-image/config.yaml
+```
+
+**Config file example** (`.check-image/config.yaml`):
+
+```yaml
+checks:
+  age:
+    max-age: 90
+  size:
+    max-size: 500
+    max-layers: 20
+  ports:
+    allowed-ports: "@config/allowed-ports.yaml"
+  registry:
+    registry-policy: config/registry-policy.yaml
+  root-user: {}
+  secrets:
+    secrets-policy: config/secrets-policy.yaml
+  labels:
+    labels-policy: config/labels-policy.yaml
+  healthcheck: {}
+  entrypoint: {}
+  platform:
+    allowed-platforms: "@config/allowed-platforms.yaml"
+```
+
+### With Policy Files
+
+```yaml
+steps:
+  - uses: actions/checkout@v4
+  
+  - uses: jarfernandez/check-image@v0.19.4
+    with:
+      image: ghcr.io/myorg/app:latest
+      registry-policy: policies/registry-policy.yaml
+      labels-policy: policies/labels-policy.json
+      skip: healthcheck
+```
+
+**Registry policy example** (`policies/registry-policy.yaml`):
+
+```yaml
+trusted-registries:
+  - index.docker.io
+  - ghcr.io
+  - gcr.io
+  - quay.io
+```
+
+**Labels policy example** (`policies/labels-policy.json`):
+
+```json
+{
+  "required-labels": [
+    {"name": "maintainer"},
+    {"name": "org.opencontainers.image.version", "pattern": "^v?\\d+\\.\\d+\\.\\d+$"},
+    {"name": "org.opencontainers.image.vendor", "value": "MyCompany"}
+  ]
+}
+```
+
+## Step Summary
+
+The action automatically generates a **GitHub Actions Step Summary** visible in the workflow run UI:
+
+### Summary Table
+
+Shows pass/fail status for each check:
+
+| Check | Result | Message |
+|-------|--------|----------|
+| age | ✅ PASS | Image is less than 90 days old |
+| size | ✅ PASS | Image size and layers within limits |
+| root-user | ❌ FAIL | Image runs as root user |
+
+### Failed Check Details
+
+Expanded details for failed checks:
+
+```
+root-user:
+  User: root
+  UID: 0
+```
+
+### Full JSON Output
+
+Collapsible section with complete JSON output for programmatic processing.
+
+## Using Outputs
+
+### Accessing Result Output
+
+```yaml
+- uses: jarfernandez/check-image@v0.19.4
+  id: check
+  with:
+    image: nginx:latest
+    checks: age,size
+
+- name: Check result
+  run: |
+    echo "Validation result: ${{ steps.check.outputs.result }}"
+    if [ "${{ steps.check.outputs.result }}" = "failed" ]; then
+      echo "Image validation failed"
+    fi
+```
+
+### Processing JSON Output
+
+```yaml
+- uses: jarfernandez/check-image@v0.19.4
+  id: check
+  continue-on-error: true
+  with:
+    image: nginx:latest
+    checks: age,size
+
+- name: Process results
+  if: always()
+  run: |
+    echo '${{ steps.check.outputs.json }}' | jq '.summary'
+    echo '${{ steps.check.outputs.json }}' | jq '.checks[] | select(.passed == false)'
+```
+
+### Conditional Steps
+
+```yaml
+- uses: jarfernandez/check-image@v0.19.4
+  id: check
+  continue-on-error: true
+  with:
+    image: nginx:latest
+
+- name: Send notification on failure
+  if: steps.check.outputs.result == 'failed'
+  run: |
+    curl -X POST ${{ secrets.WEBHOOK_URL }} \
+      -d '{"status": "failed", "details": ${{ steps.check.outputs.json }}}'
+```
+
+## Soft Failure Mode
+
+Use `continue-on-error` to prevent validation failures from stopping the workflow:
+
+```yaml
+- uses: jarfernandez/check-image@v0.19.4
+  id: check
+  continue-on-error: true
+  with:
+    image: nginx:latest
+    config: .check-image/config.yaml
+
+- name: Handle results
+  if: steps.check.outputs.result == 'failed'
+  run: |
+    echo "⚠️ Image validation failed but continuing"
+    echo '${{ steps.check.outputs.json }}' | jq '.checks[] | select(.passed == false) | .check'
+```
+
+## Complete Workflow Examples
+
+### Validate Built Image
+
+```yaml
+name: Build and Validate
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  build-and-validate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      
+      - name: Build image
+        run: docker build -t myapp:${{ github.sha }} .
+      
+      - uses: jarfernandez/check-image@v0.19.4
+        with:
+          image: myapp:${{ github.sha }}
+          max-age: '90'
+          max-size: '500'
+          checks: age,size,root-user,healthcheck,entrypoint
+```
+
+### Validate Registry Image with Auth
+
+```yaml
+name: Validate Registry Image
+
+on:
+  schedule:
+    - cron: '0 0 * * *'  # Daily
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      
+      - name: Login to GHCR
+        run: echo "${{ secrets.GITHUB_TOKEN }}" | docker login ghcr.io -u ${{ github.actor }} --password-stdin
+      
+      - uses: jarfernandez/check-image@v0.19.4
+        with:
+          image: ghcr.io/${{ github.repository }}:latest
+          registry-policy: .github/registry-policy.yaml
+          labels-policy: .github/labels-policy.yaml
+          max-age: '30'
+```
+
+### Multi-Image Validation
+
+```yaml
+name: Validate Multiple Images
+
+on: [push]
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        image:
+          - nginx:latest
+          - alpine:latest
+          - ubuntu:latest
+    steps:
+      - uses: actions/checkout@v4
+      
+      - uses: jarfernandez/check-image@v0.19.4
+        with:
+          image: ${{ matrix.image }}
+          checks: age,size,root-user
+          max-age: '90'
+          max-size: '200'
+```
+
+### Fail-Fast Mode
+
+```yaml
+- uses: jarfernandez/check-image@v0.19.4
+  with:
+    image: nginx:latest
+    fail-fast: true
+    checks: age,size,root-user,healthcheck
+    max-age: '30'
+```
+
+Stops on the first check that fails, useful for quick feedback.
+
+## Platform-Specific Validation
+
+### Validate Multi-Arch Image
+
+```yaml
+- uses: jarfernandez/check-image@v0.19.4
+  with:
+    image: myapp:latest
+    allowed-platforms: linux/amd64,linux/arm64
+```
+
+### With Platform Policy File
+
+```yaml
+steps:
+  - uses: actions/checkout@v4
+  
+  - uses: jarfernandez/check-image@v0.19.4
+    with:
+      image: myapp:latest
+      allowed-platforms: "@.github/allowed-platforms.yaml"
+```
+
+**Platform policy file** (`.github/allowed-platforms.yaml`):
+
+```yaml
+allowed-platforms:
+  - linux/amd64
+  - linux/arm64
+  - linux/arm/v7
+```
+
+## Private Registry Authentication
+
+The action supports private registries through Docker authentication:
+
+### Using docker/login-action
+
+```yaml
+steps:
+  - name: Login to Docker Hub
+    uses: docker/login-action@v3
+    with:
+      username: ${{ secrets.DOCKER_USERNAME }}
+      password: ${{ secrets.DOCKER_PASSWORD }}
+  
+  - uses: jarfernandez/check-image@v0.19.4
+    with:
+      image: myorg/private-app:latest
+```
+
+### GitHub Container Registry (GHCR)
+
+```yaml
+steps:
+  - name: Login to GHCR
+    uses: docker/login-action@v3
+    with:
+      registry: ghcr.io
+      username: ${{ github.actor }}
+      password: ${{ secrets.GITHUB_TOKEN }}
+  
+  - uses: jarfernandez/check-image@v0.19.4
+    with:
+      image: ghcr.io/${{ github.repository }}/app:latest
+```
+
+### AWS ECR
+
+```yaml
+steps:
+  - name: Configure AWS credentials
+    uses: aws-actions/configure-aws-credentials@v4
+    with:
+      aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+      aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+      aws-region: us-east-1
+  
+  - name: Login to ECR
+    uses: aws-actions/amazon-ecr-login@v2
+  
+  - uses: jarfernandez/check-image@v0.19.4
+    with:
+      image: 123456789012.dkr.ecr.us-east-1.amazonaws.com/myapp:latest
+```
+
+## Security Best Practices
+
+### Validate Before Push
+
+```yaml
+name: Build, Validate, Push
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      
+      - name: Build image
+        run: docker build -t myapp:${{ github.sha }} .
+      
+      - name: Validate image
+        uses: jarfernandez/check-image@v0.19.4
+        with:
+          image: myapp:${{ github.sha }}
+          config: .check-image/config.yaml
+      
+      - name: Push image (only if validation passed)
+        run: |
+          echo "${{ secrets.REGISTRY_TOKEN }}" | docker login ghcr.io -u ${{ github.actor }} --password-stdin
+          docker tag myapp:${{ github.sha }} ghcr.io/${{ github.repository }}:latest
+          docker push ghcr.io/${{ github.repository }}:latest
+```
+
+### Block Merges on Validation Failure
+
+Make the validation check required in branch protection rules:
+
+```yaml
+name: PR Validation
+
+on:
+  pull_request:
+    types: [opened, synchronize]
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      
+      - uses: jarfernandez/check-image@v0.19.4
+        with:
+          image: myapp:pr-${{ github.event.pull_request.number }}
+          checks: age,size,root-user,secrets,entrypoint
+```
+
+Then enable "Require status checks to pass" in GitHub settings.
+
+## Debugging
+
+### Enable Debug Logging
+
+```yaml
+- uses: jarfernandez/check-image@v0.19.4
+  with:
+    image: nginx:latest
+    log-level: debug
+```
+
+### Enable GitHub Actions Debug Logging
+
+Set repository secrets:
+- `ACTIONS_STEP_DEBUG = true`
+- `ACTIONS_RUNNER_DEBUG = true`
+
+### Inspect Action Outputs
+
+```yaml
+- uses: jarfernandez/check-image@v0.19.4
+  id: check
+  with:
+    image: nginx:latest
+
+- name: Debug outputs
+  if: always()
+  run: |
+    echo "Result: ${{ steps.check.outputs.result }}"
+    echo "JSON output:"
+    echo '${{ steps.check.outputs.json }}' | jq '.'
+```
+
+## Action Version Management
+
+### Pinning Versions
+
+```yaml
+# Recommended: Pin to specific version
+- uses: jarfernandez/check-image@v0.19.4
+
+# Pin to major version (auto-updates)
+- uses: jarfernandez/check-image@v0
+
+# Pin to commit SHA (most secure)
+- uses: jarfernandez/check-image@a1b2c3d
+```
+
+### Dependabot Updates
+
+Add to `.github/dependabot.yml`:
+
+```yaml
+version: 2
+updates:
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+```
+
+## Troubleshooting
+
+### Action Not Found
+
+```
+Error: Unable to resolve action `jarfernandez/check-image@v0.19.4`
+```
+
+**Solution:** Ensure you're using a valid release tag. Check [releases page](https://github.com/jarfernandez/check-image/releases).
+
+### Image Not Found
+
+```
+Error: Image not found: myapp:latest
+```
+
+**Solutions:**
+- Ensure image is built before validation
+- Check image name and tag spelling
+- Verify registry authentication for private images
+
+### Config File Not Found
+
+```
+Error: config file not found: .check-image/config.yaml
+```
+
+**Solution:** Ensure `actions/checkout@v4` runs before the check-image action.
+
+### Checks Require Configuration
+
+```
+Error: --registry-policy is required for registry check
+```
+
+**Solution:** Either provide the required configuration or skip the check:
+
+```yaml
+with:
+  image: nginx:latest
+  skip: registry,labels,platform
+```
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Docker Integration" icon="docker" href="/integrations/docker">
+    Use Check Image with Docker CLI
+  </Card>
+  <Card title="CI/CD Integration" icon="gears" href="/integrations/ci-cd">
+    Integrate with GitLab, CircleCI, Jenkins, and more
+  </Card>
+</CardGroup>

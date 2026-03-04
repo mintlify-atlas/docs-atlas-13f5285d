@@ -1,0 +1,382 @@
+---
+title: Installation
+description: Install Check Image using Homebrew, Go, Docker, GitHub Action, or pre-built binaries
+---
+
+Check Image provides multiple installation methods to fit your workflow. Choose the method that works best for your environment.
+
+## Pre-built Binaries (Recommended)
+
+Download the latest release for your platform from the [releases page](https://github.com/jarfernandez/check-image/releases).
+
+<Tip>
+  Pre-built binaries include the correct version number (e.g., `check-image version --short` returns `v0.19.4`).
+</Tip>
+
+### macOS
+
+<CodeGroup>
+```bash Apple Silicon (ARM64)
+# Set the version you want to install
+VERSION=0.19.4
+
+# Download and install
+curl -sL "https://github.com/jarfernandez/check-image/releases/download/v${VERSION}/check-image_${VERSION}_darwin_arm64.tar.gz" | tar xz
+sudo mv check-image /usr/local/bin/
+
+# Verify installation
+check-image version
+```
+
+```bash Intel (AMD64)
+# Set the version you want to install
+VERSION=0.19.4
+
+# Download and install
+curl -sL "https://github.com/jarfernandez/check-image/releases/download/v${VERSION}/check-image_${VERSION}_darwin_amd64.tar.gz" | tar xz
+sudo mv check-image /usr/local/bin/
+
+# Verify installation
+check-image version
+```
+</CodeGroup>
+
+### Linux
+
+<CodeGroup>
+```bash AMD64
+# Set the version you want to install
+VERSION=0.19.4
+
+# Download and install
+curl -sL "https://github.com/jarfernandez/check-image/releases/download/v${VERSION}/check-image_${VERSION}_linux_amd64.tar.gz" | tar xz
+sudo mv check-image /usr/local/bin/
+
+# Verify installation
+check-image version
+```
+
+```bash ARM64
+# Set the version you want to install
+VERSION=0.19.4
+
+# Download and install
+curl -sL "https://github.com/jarfernandez/check-image/releases/download/v${VERSION}/check-image_${VERSION}_linux_arm64.tar.gz" | tar xz
+sudo mv check-image /usr/local/bin/
+
+# Verify installation
+check-image version
+```
+</CodeGroup>
+
+### Windows
+
+1. Download the Windows binary:
+   ```
+   https://github.com/jarfernandez/check-image/releases/download/v0.19.4/check-image_0.19.4_windows_amd64.zip
+   ```
+2. Extract the ZIP file
+3. Move `check-image.exe` to a directory in your PATH
+4. Verify installation:
+   ```powershell
+   check-image version
+   ```
+
+## Homebrew
+
+Install on macOS or Linux using Homebrew:
+
+<Steps>
+  <Step title="Install Check Image">
+    ```bash
+    brew tap jarfernandez/tap
+    brew install check-image
+    ```
+  </Step>
+  
+  <Step title="Verify Installation">
+    ```bash
+    check-image version
+    ```
+  </Step>
+  
+  <Step title="Upgrade (Optional)">
+    To upgrade to a new version:
+    ```bash
+    brew upgrade check-image
+    ```
+  </Step>
+</Steps>
+
+**Requirements:** macOS or Linux with [Homebrew](https://brew.sh) installed.
+
+## Go Install
+
+Install directly from source using Go:
+
+```bash
+# Install the latest version
+go install github.com/jarfernandez/check-image/cmd/check-image@latest
+
+# Or install a specific version
+go install github.com/jarfernandez/check-image/cmd/check-image@v0.19.4
+```
+
+**Requirements:** Go 1.26 or newer
+
+<Note>
+  Binaries installed with `go install` will show version as `dev` when running `check-image version`. This is expected behavior as `go install` compiles from source without version injection. For production use with correct version numbers, use pre-built binaries from releases.
+</Note>
+
+## Docker
+
+Check Image is available as a multi-arch Docker image (linux/amd64, linux/arm64) from GitHub Container Registry:
+
+```bash
+docker pull ghcr.io/jarfernandez/check-image:latest
+```
+
+### Basic Usage
+
+Validate remote registry images (no Docker socket required):
+
+<CodeGroup>
+```bash Age Check
+# Check if image is less than 30 days old
+docker run --rm ghcr.io/jarfernandez/check-image:latest \
+  age nginx:latest --max-age 30
+```
+
+```bash Size Check
+# Check if image is smaller than 100MB
+docker run --rm ghcr.io/jarfernandez/check-image:latest \
+  size nginx:latest --max-size 100
+```
+
+```bash Security Check
+# Check for root user
+docker run --rm ghcr.io/jarfernandez/check-image:latest \
+  root-user nginx:latest
+```
+
+```bash All Checks
+# Run all checks with JSON output
+docker run --rm ghcr.io/jarfernandez/check-image:latest \
+  all nginx:latest -o json
+```
+</CodeGroup>
+
+### Using Policy Files
+
+Mount a local config directory to use policy files:
+
+```bash
+# Mount a local config directory
+docker run --rm \
+  -v "$(pwd)/config:/config:ro" \
+  ghcr.io/jarfernandez/check-image:latest \
+  registry nginx:latest \
+  --registry-policy /config/registry-policy.json
+
+# Run all checks with a config file
+docker run --rm \
+  -v "$(pwd)/config:/config:ro" \
+  ghcr.io/jarfernandez/check-image:latest \
+  all nginx:latest \
+  --config /config/config.yaml
+```
+
+### Using with Docker Socket (Advanced)
+
+<Warning>
+  Mounting the Docker socket grants the container full access to the Docker daemon, which is equivalent to root access on the host. Only use this in trusted environments.
+</Warning>
+
+```bash
+docker run --rm \
+  -v /var/run/docker.sock:/var/run/docker.sock \
+  ghcr.io/jarfernandez/check-image:latest \
+  age my-local-image:latest
+```
+
+Without the Docker socket mounted (the default), check-image automatically uses the remote registry to fetch image metadata. This is the recommended approach for CI/CD pipelines.
+
+### Using a Specific Version
+
+```bash
+docker pull ghcr.io/jarfernandez/check-image:0.19.4
+```
+
+## GitHub Action
+
+Check Image is available as a GitHub Action for validating container images directly in your CI/CD workflows.
+
+### Basic Usage
+
+Run all checks with default settings:
+
+```yaml .github/workflows/validate.yml
+- uses: jarfernandez/check-image@v0.19.4
+  with:
+    image: nginx:latest
+```
+
+This runs all 10 checks with default settings. Checks that require additional configuration (registry, labels, platform) will report an error unless their configuration is provided.
+
+### With a Config File
+
+```yaml .github/workflows/validate.yml
+- uses: jarfernandez/check-image@v0.19.4
+  with:
+    image: myorg/myapp:${{ github.sha }}
+    config: .check-image/config.yaml
+```
+
+The config file determines which checks to run and their parameters.
+
+### Running Specific Checks
+
+```yaml .github/workflows/validate.yml
+- uses: jarfernandez/check-image@v0.19.4
+  with:
+    image: nginx:latest
+    checks: age,size,root-user
+    max-age: '30'
+    max-size: '200'
+```
+
+### With Policy Files
+
+```yaml .github/workflows/validate.yml
+- uses: jarfernandez/check-image@v0.19.4
+  with:
+    image: ghcr.io/myorg/app:latest
+    registry-policy: policies/registry-policy.yaml
+    labels-policy: policies/labels-policy.json
+    skip: healthcheck
+```
+
+### Soft Failure
+
+Use `continue-on-error` to prevent the action from failing the workflow:
+
+```yaml .github/workflows/validate.yml
+- uses: jarfernandez/check-image@v0.19.4
+  id: check
+  continue-on-error: true
+  with:
+    image: nginx:latest
+    config: .check-image/config.yaml
+
+- name: Handle results
+  if: steps.check.outputs.result == 'failed'
+  run: echo "Image validation failed but continuing"
+```
+
+### Using JSON Output
+
+The action captures full JSON output for programmatic use:
+
+```yaml .github/workflows/validate.yml
+- uses: jarfernandez/check-image@v0.19.4
+  id: check
+  continue-on-error: true
+  with:
+    image: nginx:latest
+    checks: age,size
+
+- name: Process results
+  if: always()
+  run: echo '${{ steps.check.outputs.json }}' | jq '.summary'
+```
+
+### Action Inputs
+
+| Input | Required | Default | Description |
+|-------|----------|---------|-------------|
+| `image` | Yes | - | Container image to validate |
+| `config` | No | - | Path to config file for the `all` command |
+| `checks` | No | - | Comma-separated list of checks to run |
+| `skip` | No | - | Comma-separated list of checks to skip |
+| `fail-fast` | No | `false` | Stop on first check failure |
+| `max-age` | No | - | Maximum image age in days |
+| `max-size` | No | - | Maximum image size in MB |
+| `max-layers` | No | - | Maximum number of layers |
+| `allowed-ports` | No | - | Comma-separated allowed ports or `@file` path |
+| `allowed-platforms` | No | - | Comma-separated allowed platforms or `@file` path |
+| `registry-policy` | No | - | Path to registry policy file |
+| `labels-policy` | No | - | Path to labels policy file |
+| `secrets-policy` | No | - | Path to secrets policy file |
+| `skip-env-vars` | No | `false` | Skip environment variable checks |
+| `skip-files` | No | `false` | Skip file system checks |
+| `allow-shell-form` | No | `false` | Allow shell form for entrypoint or cmd |
+| `log-level` | No | `info` | Log level |
+| `version` | No | `0.19.4` | check-image version to use |
+
+### Action Outputs
+
+| Output | Description |
+|--------|-------------|
+| `result` | Validation result: `passed`, `failed`, or `error` |
+| `json` | Full JSON output from check-image |
+
+The action also generates a **Step Summary** visible in the GitHub Actions UI with a results table, details of failed checks, and full JSON output.
+
+### Requirements
+
+The action downloads the check-image binary from GitHub Releases, so no additional dependencies are needed for validating remote registry images. To validate local Docker images (e.g., after `docker build`), Docker must be available on the runner — this is satisfied by default on `ubuntu-latest` runners.
+
+## Build from Source
+
+If you've cloned the repository, you can build and install locally:
+
+```bash
+git clone https://github.com/jarfernandez/check-image.git
+cd check-image
+go install ./cmd/check-image
+```
+
+This is useful for development. The version will show as `dev`.
+
+## Verify Installation
+
+After installation, verify Check Image is working:
+
+<Steps>
+  <Step title="Check Version">
+    ```bash
+    check-image version
+    ```
+    
+    Expected output:
+    ```
+    check-image version v0.19.4
+    commit:     a1b2c3d
+    built at:   2026-02-18T12:34:56Z
+    go version: go1.26.0
+    platform:   linux/amd64
+    ```
+  </Step>
+  
+  <Step title="Run a Simple Check">
+    ```bash
+    check-image age nginx:latest
+    ```
+    
+    This validates that nginx:latest is not older than 90 days (default).
+  </Step>
+  
+  <Step title="View Help">
+    ```bash
+    check-image --help
+    ```
+    
+    This displays all available commands and options.
+  </Step>
+</Steps>
+
+## Next Steps
+
+<Card title="Quick Start Guide" icon="rocket" href="/quickstart">
+  Learn how to perform your first image validation and run common checks
+</Card>

@@ -1,0 +1,185 @@
+---
+title: age
+description: Validate container image age
+---
+
+The `age` command validates that a container image is not older than a specified number of days. This ensures you're using recent images with up-to-date dependencies and security patches.
+
+## Usage
+
+```bash
+check-image age <image> [flags]
+```
+
+## Description
+
+The `age` command checks the image's creation timestamp (from the OCI config's `created` field) and calculates how many days have passed since that date. If the image age exceeds the configured maximum, the validation fails.
+
+This check helps:
+- Ensure images contain recent security patches
+- Prevent deployment of outdated dependencies
+- Maintain compliance with update policies
+- Identify images that need rebuilding
+
+## Flags
+
+<ParamField path="--max-age" type="uint" default="90">
+  Maximum age in days. Images older than this value will fail validation.
+  
+  Short form: `-a`
+</ParamField>
+
+<ParamField path="--output" type="string" default="text">
+  Output format: `text` or `json`
+  
+  Short form: `-o`
+</ParamField>
+
+<ParamField path="--color" type="string" default="auto">
+  Color output mode: `auto`, `always`, `never`
+</ParamField>
+
+<ParamField path="--log-level" type="string" default="info">
+  Set log level: trace, debug, info, warn, error, fatal, panic
+</ParamField>
+
+## Examples
+
+### Basic usage with default age limit (90 days)
+
+```bash
+check-image age nginx:latest
+```
+
+### Custom age limit
+
+```bash
+check-image age nginx:latest --max-age 30
+```
+
+### Check OCI archive
+
+```bash
+check-image age oci-archive:/path/to/image.tar:latest --max-age 60
+```
+
+### JSON output
+
+```bash
+check-image age nginx:latest --max-age 30 -o json
+```
+
+## Output
+
+### Text Format
+
+When validation passes:
+```
+✓ Image is less than 90 days old
+
+Details:
+  Created At: 2026-02-04T23:53:09Z
+  Age (Days): 27.5
+  Max Age (Days): 90
+```
+
+When validation fails:
+```
+✗ Image is older than 30 days
+
+Details:
+  Created At: 2025-11-01T12:00:00Z
+  Age (Days): 123.7
+  Max Age (Days): 30
+```
+
+### JSON Format
+
+```json
+{
+  "check": "age",
+  "image": "nginx:latest",
+  "passed": true,
+  "message": "Image is less than 90 days old",
+  "details": {
+    "created-at": "2026-02-04T23:53:09Z",
+    "age-days": 27.5,
+    "max-age": 90
+  }
+}
+```
+
+## Exit Codes
+
+| Code | Meaning | Example |
+|------|---------|------|
+| 0 | Image is within age limit | Image created 30 days ago with max-age 90 |
+| 1 | Image exceeds age limit | Image created 100 days ago with max-age 90 |
+| 2 | Execution error | Image not found, invalid format |
+
+## Configuration
+
+When using the `all` command, configure age validation in your config file:
+
+<CodeGroup>
+```yaml YAML
+checks:
+  age:
+    max-age: 30
+```
+
+```json JSON
+{
+  "checks": {
+    "age": {
+      "max-age": 30
+    }
+  }
+}
+```
+</CodeGroup>
+
+## Implementation Details
+
+- Reads the `created` timestamp from the OCI image configuration
+- Calculates age as `time.Since(created)` in days (fractional)
+- Fails if creation date is zero/missing
+- Age comparison: `age_days <= max_age`
+- Works with all image transport types (registry, OCI layout, archives)
+
+## Common Issues
+
+### Image creation date is not set
+
+Some images may not have a creation timestamp. This is rare but can happen with malformed images:
+
+```
+Error: image creation date is not set
+```
+
+**Solution**: Rebuild the image properly or contact the image maintainer.
+
+### Old base images
+
+If you're building on top of old base images, your final image will inherit that old creation date:
+
+```
+✗ Image is older than 30 days
+```
+
+**Solution**: Update your base image in the `FROM` instruction and rebuild.
+
+## Best Practices
+
+<Check>Set age limits based on your update cadence (e.g., 30 days for weekly builds, 90 days for monthly)</Check>
+<Check>Combine with automated image rebuilds in CI/CD</Check>
+<Check>Use stricter limits for production images</Check>
+<Check>Consider different limits for base images vs. application images</Check>
+
+<Warning>Very strict age limits (e.g., 7 days) may cause frequent failures and require aggressive rebuild automation</Warning>
+
+## Related Commands
+
+- [`all`](/commands/all) - Run all checks including age validation
+- [`size`](/commands/size) - Validate image size and layers
+- [`registry`](/commands/registry) - Validate registry trust

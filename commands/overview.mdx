@@ -1,0 +1,158 @@
+---
+title: Commands Overview
+description: Complete reference of all check-image validation commands
+---
+
+check-image provides 12 commands for validating container images against security and operational standards. Each command can be run individually or together using the `all` command.
+
+## Available Commands
+
+<CardGroup cols={2}>
+  <Card title="age" icon="clock" href="/commands/age">
+    Validate that the image is not older than a specified number of days
+  </Card>
+  
+  <Card title="size" icon="file" href="/commands/size">
+    Validate image size and layer count are within acceptable limits
+  </Card>
+  
+  <Card title="registry" icon="shield-check" href="/commands/registry">
+    Validate that the image registry is trusted based on a policy file
+  </Card>
+  
+  <Card title="ports" icon="network-wired" href="/commands/ports">
+    Validate that the image does not expose unauthorized ports
+  </Card>
+  
+  <Card title="root-user" icon="user-shield" href="/commands/root-user">
+    Validate that the image runs as non-root user
+  </Card>
+  
+  <Card title="healthcheck" icon="heart-pulse" href="/commands/healthcheck">
+    Validate that the image has a healthcheck defined
+  </Card>
+  
+  <Card title="secrets" icon="key" href="/commands/secrets">
+    Validate that the image does not contain sensitive data
+  </Card>
+  
+  <Card title="entrypoint" icon="play" href="/commands/entrypoint">
+    Validate that the image has a startup command defined and uses exec form
+  </Card>
+  
+  <Card title="labels" icon="tag" href="/commands/labels">
+    Validate that the image has required labels with correct values
+  </Card>
+  
+  <Card title="platform" icon="microchip" href="/commands/platform">
+    Validate that the image platform is in the allowed list
+  </Card>
+  
+  <Card title="all" icon="list-check" href="/commands/all">
+    Run all validation checks on a container image at once
+  </Card>
+  
+  <Card title="version" icon="info" href="/commands/version">
+    Show check-image version with full build information
+  </Card>
+</CardGroup>
+
+## Command Categories
+
+### Security Validation
+These commands ensure images meet security standards:
+
+- **root-user** - Prevents containers from running as root
+- **secrets** - Detects sensitive data in environment variables and files
+- **registry** - Ensures images come from trusted registries
+
+### Operational Standards
+These commands validate operational best practices:
+
+- **age** - Ensures images are not outdated
+- **size** - Controls image bloat and layer count
+- **healthcheck** - Validates container health monitoring
+- **entrypoint** - Ensures proper startup command configuration
+
+### Configuration Validation
+These commands check specific image configurations:
+
+- **ports** - Controls exposed network ports
+- **labels** - Validates OCI annotations and metadata
+- **platform** - Ensures correct OS/architecture compatibility
+
+### Orchestration
+- **all** - Runs multiple checks together with fail-fast support
+- **version** - Shows tool version and build information
+
+## Global Flags
+
+All commands support these flags:
+
+- `--output`, `-o` - Output format: `text` (default) or `json`
+- `--color` - Color output mode: `auto` (default), `always`, `never`
+- `--log-level` - Set log level: trace, debug, info, warn, error, fatal, panic
+- `--username` - Registry username for authentication
+- `--password` - Registry password or token
+- `--password-stdin` - Read registry password from stdin
+
+## Exit Codes
+
+| Exit Code | Meaning | Example |
+|-----------|---------|------|
+| 0 | Validation succeeded or no checks ran | Image passes all checks |
+| 1 | Validation failed | Image is too old, runs as root, exposes unauthorized ports |
+| 2 | Execution error | Invalid config file, image not found, invalid arguments |
+
+## Image Reference Formats
+
+All commands support multiple image sources:
+
+```bash
+# Registry image (daemon with registry fallback)
+check-image <command> nginx:latest
+check-image <command> docker.io/library/nginx:latest
+
+# OCI layout directory
+check-image <command> oci:/path/to/layout:tag
+check-image <command> oci:/path/to/layout@sha256:digest
+
+# OCI tarball archive
+check-image <command> oci-archive:/path/to/image.tar:tag
+
+# Docker tarball archive
+check-image <command> docker-archive:/path/to/image.tar:tag
+```
+
+## Quick Start
+
+```bash
+# Run individual checks
+check-image age nginx:latest --max-age 30
+check-image size nginx:latest --max-size 100
+check-image root-user nginx:latest
+
+# Run all checks
+check-image all nginx:latest
+
+# Run all checks with config file
+check-image all nginx:latest --config config.yaml
+
+# Run specific checks only
+check-image all nginx:latest --checks age,size,root-user
+
+# Skip specific checks
+check-image all nginx:latest --skip registry,labels
+```
+
+## Related Resources
+
+<CardGroup cols={2}>
+  <Card title="Getting Started" icon="rocket" href="/getting-started">
+    Learn how to install and use check-image
+  </Card>
+  
+  <Card title="Configuration" icon="gear" href="/configuration">
+    Configure validation policies and thresholds
+  </Card>
+</CardGroup>

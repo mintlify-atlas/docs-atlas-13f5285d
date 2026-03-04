@@ -1,0 +1,575 @@
+---
+title: CI/CD Pipelines
+description: Understand the automated workflows for testing, linting, and releasing
+---
+
+## Overview
+
+check-image uses GitHub Actions for continuous integration and automated releases. All workflows are defined in `.github/workflows/`.
+
+## Workflows
+
+### ci.yml - Continuous Integration
+
+**Triggers:**
+- Every push to `main`
+- Every pull request
+
+**Purpose:** Validate code quality, run tests, and verify builds.
+
+#### Jobs
+
+##### 1. validate-pr (PRs only)
+
+Validates PR titles follow Conventional Commits format.
+
+**Steps:**
+- Uses `amannn/action-semantic-pull-request@v6`
+- Checks PR title matches: `<type>: <Description>`
+- Verifies description starts with uppercase letter
+- Allowed types: `feat`, `fix`, `docs`, `chore`, `refactor`, `test`, `style`, `perf`, `ci`, `build`, `revert`
+
+**Example errors:**
+```
+❌ PR title: "add new feature"
+   Missing type prefix
+
+❌ PR title: "feat: add new feature"
+   Description must start with uppercase
+
+✅ PR title: "feat: Add new feature"
+```
+
+##### 2. test
+
+Runs tests on multiple operating systems.
+
+**Matrix:**
+- `ubuntu-latest` (Linux)
+- `macos-latest` (macOS)
+- `windows-latest` (Windows)
+
+**Steps:**
+1. Checkout code
+2. Set up Go 1.26 with caching
+3. Download dependencies: `go mod download`
+4. Verify dependencies: `go mod verify`
+5. Run tests:
+   - Unix: `go test ./... -race -coverprofile=coverage.out -covermode=atomic`
+   - Windows: `go test ./... -race` (no coverage file)
+6. Upload coverage to Codecov (Ubuntu only)
+
+**Key features:**
+- Race detection enabled (`-race`)
+- Coverage tracked on Linux
+- Fail-fast disabled (all platforms tested even if one fails)
+
+##### 3. lint
+
+Enforces code quality standards.
+
+**Steps:**
+1. Checkout code
+2. Set up Go 1.26 with caching
+3. Run `golangci-lint` with config from `.golangci.yml`
+4. Check formatting:
+   ```bash
+   if [ "$(gofmt -s -l . | wc -l)" -gt 0 ]; then
+     gofmt -s -l .
+     exit 1
+   fi
+   ```
+5. Run `go vet ./...`
+6. Verify `go.mod` is tidy:
+   ```bash
+   go mod tidy
+   git diff go.mod go.sum
+   # Fails if changes detected
+   ```
+
+**Linters enabled:**
+See `.golangci.yml` for the complete configuration:
+- `errcheck`: Unchecked errors
+- `gosimple`: Simplification suggestions
+- `govet`: Suspicious constructs
+- `ineffassign`: Ineffective assignments
+- `staticcheck`: Static analysis
+- `typecheck`: Type errors
+- `unused`: Unused code
+- `gosec`: Security issues (warning only in pre-commit)
+
+##### 4. build
+
+Verifies cross-compilation for all supported platforms.
+
+**Matrix:**
+
+| OS | Architecture |
+|----|-------------|
+| linux | amd64 |
+| linux | arm64 |
+| darwin | amd64 |
+| darwin | arm64 |
+| windows | amd64 |
+
+**Build command:**
+```bash
+VERSION="ci-${GITHUB_SHA::8}"
+go build -ldflags "-s -w -X check-image/internal/version.Version=$VERSION" \
+  -o check-image \
+  ./cmd/check-image
+```
+
+**Verification:**
+- On Linux amd64: run `./check-image version` and `./check-image --help`
+- Other platforms: build verification only
+
+### codeql.yml - Security Analysis
+
+**Triggers:**
+- Every push to `main`
+- Every pull request to `main`
+- Weekly schedule (Monday at 06:00 UTC)
+
+**Purpose:** Static security analysis of Go code.
+
+**Steps:**
+1. Checkout code
+2. Set up Go 1.26 with caching
+3. Initialize CodeQL with `security-extended` queries
+4. Build: `go build ./...`
+5. Perform analysis
+6. Upload results to GitHub Security tab
+
+**Benefits:**
+- Detects security vulnerabilities
+- Finds potential bugs
+- Suggests best practices
+- Weekly scans catch new issues
+
+### release-please.yml - Release Pipeline
+
+**Triggers:**
+- Every push to `main`
+
+**Purpose:** Automate releases, build binaries, and publish Docker images.
+
+**Permissions:**
+```yaml
+contents: write        # Create releases and tags
+pull-requests: write   # Create/update release PRs
+packages: write        # Push to GHCR
+```
+
+#### Jobs
+
+##### 1. release-please
+
+Manages versioning and release PRs.
+
+**Steps:**
+1. Run `googleapis/release-please-action@v4`
+2. Analyze commits since last release
+3. Calculate next version based on commit types
+4. Create or update Release PR with:
+   - Updated `CHANGELOG.md`
+   - Updated version in `README.md` and `action.yml`
+   - Updated `.github/release-please-manifest.json`
+
+**Outputs:**
+- `releases_created`: `true` if Release PR was merged
+- `tag_name`: Git tag created (e.g., `v0.20.0`)
+
+**On Release PR merge:**
+- Creates git tag
+- Creates GitHub Release with changelog
+- Triggers downstream jobs
+
+##### 2. goreleaser
+
+**Condition:** `needs.release-please.outputs.releases_created == 'true'`
+
+**Steps:**
+1. Checkout tagged commit
+2. Set up Go 1.26 with caching
+3. Run `goreleaser/goreleaser-action@v7`:
+   - `go mod tidy`
+   - `go test ./...`
+   - Build binaries for all platforms
+   - Inject version via ldflags
+   - Create archives
+   - Generate checksums
+   - Upload to GitHub Release (`mode: append`)
+   - Update Homebrew tap
+
+**Environment variables:**
+- `GITHUB_TOKEN`: For GitHub Release uploads
+- `HOMEBREW_TAP_GITHUB_TOKEN`: For Homebrew tap updates
+
+**Artifacts created:**
+```
+check-image_0.20.0_linux_amd64.tar.gz
+check-image_0.20.0_linux_arm64.tar.gz
+check-image_0.20.0_darwin_amd64.tar.gz
+check-image_0.20.0_darwin_arm64.tar.gz
+check-image_0.20.0_windows_amd64.zip
+checksums.txt
+```
+
+Each archive includes:
+- `check-image` binary
+- `LICENSE`
+- `README.md`
+- `CHANGELOG.md`
+- `config/*` sample files
+
+##### 3. docker
+
+**Condition:** `needs.release-please.outputs.releases_created == 'true'`  
+**Dependencies:** `release-please`, `goreleaser`
+
+**Why depend on goreleaser?** The dogfooding step uses the GitHub Action, which downloads the binary from the release.
+
+**Steps:**
+
+1. **Checkout tagged commit**
+
+2. **Lint Dockerfile:**
+   ```yaml
+   - uses: hadolint/hadolint-action@v3.3.0
+     with:
+       dockerfile: Dockerfile
+   ```
+
+3. **Set up build tools:**
+   - QEMU for multi-arch builds
+   - Docker Buildx
+
+4. **Extract build metadata:**
+   ```bash
+   version=${TAG_NAME#v}  # v0.20.0 → 0.20.0
+   commit=$(git rev-parse --short HEAD)
+   build_date=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+   ```
+
+5. **Build single-arch image for scanning:**
+   ```yaml
+   - uses: docker/build-push-action@v6
+     with:
+       platforms: linux/amd64
+       load: true
+       tags: check-image:scan
+   ```
+
+6. **Run Trivy security scan:**
+   ```yaml
+   - uses: aquasecurity/trivy-action@master
+     with:
+       image-ref: check-image:scan
+       severity: CRITICAL,HIGH
+       exit-code: 1
+       ignore-unfixed: true
+   ```
+
+7. **Validate with check-image (dogfooding):**
+   ```yaml
+   - uses: ./
+     with:
+       image: check-image:scan
+       checks: size,root-user,ports,secrets
+       max-size: '20'
+   ```
+
+   Validates:
+   - Image < 20MB
+   - Runs as non-root
+   - No unauthorized ports
+   - No secrets detected
+
+8. **Log in to GHCR:**
+   ```yaml
+   - uses: docker/login-action@v3
+     with:
+       registry: ghcr.io
+       username: ${{ github.actor }}
+       password: ${{ secrets.GITHUB_TOKEN }}
+   ```
+
+9. **Generate Docker metadata:**
+   ```yaml
+   - uses: docker/metadata-action@v5
+     with:
+       images: ghcr.io/jarfernandez/check-image
+       tags: |
+         type=semver,pattern={{version}}
+         type=semver,pattern={{major}}.{{minor}}
+         type=semver,pattern={{major}}
+         type=raw,value=latest
+   ```
+
+10. **Build and push multi-arch image:**
+    ```yaml
+    - uses: docker/build-push-action@v6
+      with:
+        platforms: linux/amd64,linux/arm64
+        push: true
+        tags: ${{ steps.meta.outputs.tags }}
+        build-args: |
+          VERSION=${{ steps.version.outputs.version }}
+          COMMIT=${{ steps.version.outputs.commit }}
+          BUILD_DATE=${{ steps.version.outputs.build_date }}
+    ```
+
+**Published tags:**
+```
+ghcr.io/jarfernandez/check-image:0.20.0
+ghcr.io/jarfernandez/check-image:0.20
+ghcr.io/jarfernandez/check-image:0
+ghcr.io/jarfernandez/check-image:latest
+```
+
+### test-action.yml - GitHub Action Testing
+
+**Triggers:**
+- Pull requests that modify `action.yml` or `entrypoint.sh`
+
+**Purpose:** Validate the GitHub Action works correctly.
+
+**Steps:**
+1. Checkout code
+2. Test action with real images:
+   ```yaml
+   - uses: ./
+     with:
+       image: nginx:latest
+       checks: age,size,root-user
+       max-age: '90'
+       max-size: '200'
+   ```
+
+**Validates:**
+- Binary download from releases
+- Input-to-CLI mapping
+- Output capture (JSON and exit code)
+- Step summary generation
+
+## Workflow Dependencies
+
+### CI Workflow (parallel)
+
+```
+validate-pr (PRs only)
+test (ubuntu, macos, windows)
+lint
+build (5 platform matrix)
+```
+
+All jobs run in parallel. PR merge requires all to pass.
+
+### Release Workflow (sequential)
+
+```
+release-please
+    ↓
+    ├─→ goreleaser
+    │       ↓
+    └─────→ docker (waits for both)
+```
+
+**Why this order?**
+1. `release-please` must create the tag first
+2. `goreleaser` builds binaries and uploads to release
+3. `docker` needs binaries uploaded (for dogfooding step)
+
+## Environment Variables
+
+### Secrets
+
+| Secret | Usage | Where Set |
+|--------|-------|----------|
+| `GITHUB_TOKEN` | Automatic, scoped to repo | GitHub Actions |
+| `CODECOV_TOKEN` | Upload coverage | Repository secret |
+| `HOMEBREW_TAP_GITHUB_TOKEN` | Update Homebrew tap | Repository secret |
+
+### Automatic Variables
+
+| Variable | Value | Usage |
+|----------|-------|-------|
+| `GITHUB_SHA` | Commit hash | Version injection in CI builds |
+| `GITHUB_REF` | Branch/tag ref | Conditional logic |
+| `GITHUB_ACTOR` | Username | GHCR login |
+| `RUNNER_OS` | OS name | Platform detection |
+| `RUNNER_ARCH` | Architecture | Platform detection |
+
+## Caching
+
+### Go Module Cache
+
+All workflows use Go module caching:
+
+```yaml
+- uses: actions/setup-go@v6
+  with:
+    go-version: '1.26'
+    cache: true  # Caches $GOPATH/pkg/mod and build cache
+```
+
+**Benefits:**
+- Faster dependency downloads
+- Faster builds
+- Reduced CI time
+
+### Docker Build Cache
+
+Docker builds use GitHub Actions cache:
+
+```yaml
+- uses: docker/build-push-action@v6
+  with:
+    cache-from: type=gha
+    cache-to: type=gha,mode=max
+```
+
+**Benefits:**
+- Reuses layers between builds
+- Faster image builds
+- Shared across workflow runs
+
+## CI Checks Summary
+
+Before merging a PR, all these checks must pass:
+
+### Automated Checks
+
+✅ **PR title** follows Conventional Commits  
+✅ **Tests pass** on Linux, macOS, Windows  
+✅ **Coverage** maintained or improved  
+✅ **Linting** passes (golangci-lint)  
+✅ **Formatting** correct (gofmt)  
+✅ **go vet** passes  
+✅ **go.mod** is tidy  
+✅ **Builds** succeed on all platforms  
+✅ **CodeQL** security analysis passes  
+
+### Manual Review
+
+👤 **Code review** approved by maintainer  
+👤 **Documentation** updated (README.md, CLAUDE.md)  
+👤 **Tests** cover new functionality  
+
+## Troubleshooting
+
+### CI Failure: Test
+
+**Check:**
+- Run tests locally: `go test ./... -race`
+- Review test output in GitHub Actions logs
+- Check for platform-specific issues
+
+### CI Failure: Lint
+
+**Check:**
+- Run linter locally: `golangci-lint run`
+- Format code: `gofmt -s -w .`
+- Check vet: `go vet ./...`
+- Tidy modules: `go mod tidy`
+
+### CI Failure: Build
+
+**Check:**
+- Cross-compile locally:
+  ```bash
+  GOOS=linux GOARCH=arm64 go build ./cmd/check-image
+  GOOS=darwin GOARCH=amd64 go build ./cmd/check-image
+  ```
+- Review compiler errors in logs
+
+### Release Failure: GoReleaser
+
+**Check:**
+- Homebrew token is valid (check expiration)
+- Tests pass: `go test ./...`
+- GoReleaser config is valid: `goreleaser check`
+
+### Release Failure: Docker
+
+**Check:**
+- Dockerfile lints: `hadolint Dockerfile`
+- Build succeeds locally:
+  ```bash
+  docker build --build-arg VERSION=test -t test .
+  ```
+- Trivy scan passes:
+  ```bash
+  docker run --rm aquasec/trivy image test
+  ```
+- Image validates:
+  ```bash
+  docker run --rm test version
+  ```
+
+## Best Practices
+
+### For Contributors
+
+1. **Run pre-commit hooks** before pushing:
+   ```bash
+   pre-commit run --all-files
+   ```
+
+2. **Test locally** before PR:
+   ```bash
+   go test ./... -race
+   golangci-lint run
+   ```
+
+3. **Use conventional commits** for PR title
+
+4. **Wait for CI** before requesting review
+
+### For Maintainers
+
+1. **Review CI logs** even if checks pass
+
+2. **Check coverage changes** in Codecov report
+
+3. **Verify documentation** updates
+
+4. **Squash merge PRs** to maintain clean commit history
+
+5. **Monitor release workflows** for failures
+
+## Monitoring
+
+### GitHub Actions Dashboard
+
+View workflow runs:
+```
+https://github.com/jarfernandez/check-image/actions
+```
+
+### Codecov Dashboard
+
+View coverage trends:
+```
+https://codecov.io/gh/jarfernandez/check-image
+```
+
+### GitHub Security
+
+View CodeQL alerts:
+```
+https://github.com/jarfernandez/check-image/security/code-scanning
+```
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Release Process" icon="tag" href="/development/release-process">
+    Learn how releases are automated
+  </Card>
+  
+  <Card title="Contributing" icon="code-pull-request" href="/development/overview">
+    Back to contributing overview
+  </Card>
+</CardGroup>

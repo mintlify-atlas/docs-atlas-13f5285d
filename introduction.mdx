@@ -1,0 +1,145 @@
+---
+title: Introduction
+description: A Go-based CLI tool for validating container images against security and operational standards
+---
+
+Check Image is a Go-based CLI tool designed for validating container images. It ensures that images meet specific standards such as size, age, ports, and security configurations.
+
+## What is Check Image?
+
+Check Image helps you enforce container image policies across your infrastructure by validating images against a comprehensive set of security and operational checks. Whether you're working locally, in CI/CD pipelines, or with GitHub Actions, Check Image provides consistent validation across all environments.
+
+## Key Features
+
+<CardGroup cols={2}>
+  <Card title="Security Validation" icon="shield-check">
+    Check for non-root users, exposed ports, embedded secrets, and trusted registries
+  </Card>
+  <Card title="Operational Standards" icon="gauge-high">
+    Validate image size, age, layer count, and required labels
+  </Card>
+  <Card title="Multiple Formats" icon="box-archive">
+    Support for Docker daemon, remote registries, OCI layouts, and archive formats
+  </Card>
+  <Card title="Flexible Integration" icon="plug">
+    CLI, Docker container, GitHub Action, and CI/CD pipeline support
+  </Card>
+</CardGroup>
+
+## Available Checks
+
+Check Image provides 10 validation checks:
+
+| Check | Description |
+|-------|-------------|
+| **age** | Validates image is not older than specified days |
+| **size** | Validates image size and layer count limits |
+| **registry** | Validates image comes from trusted registry |
+| **ports** | Validates only authorized ports are exposed |
+| **root-user** | Validates image runs as non-root user |
+| **healthcheck** | Validates image has healthcheck defined |
+| **secrets** | Scans for embedded passwords, tokens, and keys |
+| **entrypoint** | Validates startup command uses exec form |
+| **labels** | Validates required OCI annotations are present |
+| **platform** | Validates image platform (OS/Architecture) |
+
+## Use Cases
+
+### CI/CD Pipeline Validation
+
+Validate images before deployment to ensure they meet your organization's security standards:
+
+```bash
+check-image all myapp:latest --config .check-image/config.yaml
+```
+
+### Security Scanning
+
+Scan images for common security issues like root users and embedded secrets:
+
+```bash
+check-image root-user nginx:latest
+check-image secrets myapp:latest --secrets-policy policies/secrets.yaml
+```
+
+### Registry Trust Verification
+
+Ensure images only come from approved registries:
+
+```bash
+check-image registry ghcr.io/myorg/app:latest \
+  --registry-policy policies/registry.yaml
+```
+
+### GitHub Actions Integration
+
+Automatically validate images in your GitHub workflows:
+
+```yaml
+- uses: jarfernandez/check-image@v0.19.4
+  with:
+    image: myorg/myapp:${{ github.sha }}
+    config: .check-image/config.yaml
+```
+
+## How It Works
+
+Check Image connects to container registries and Docker daemons to inspect image metadata and configuration. It can validate:
+
+- **Image manifests** for size, layer count, and platform information
+- **Image configurations** for user settings, exposed ports, healthchecks, and startup commands
+- **Image labels** for required OCI annotations
+- **Image layers** for embedded secrets and sensitive files
+- **Registry sources** against trusted/blocked lists
+
+<Note>
+  Check Image works without requiring Docker daemon access for remote registry images. This makes it ideal for CI/CD environments where you want to validate images after pushing to a registry.
+</Note>
+
+## Supported Image Sources
+
+Check Image supports multiple image transport formats (Skopeo-compatible syntax):
+
+- **Default** (Docker daemon → remote registry fallback): `nginx:latest`
+- **OCI Layout** directories: `oci:/path/to/layout:latest`
+- **OCI Archive** tarballs: `oci-archive:/path/to/image.tar:latest`
+- **Docker Archive** (from `docker save`): `docker-archive:/path/to/saved.tar:nginx:latest`
+
+## Exit Codes
+
+Check Image uses standard exit codes for easy integration with scripts and CI/CD:
+
+| Exit Code | Meaning | Example |
+|-----------|---------|----------|
+| 0 | Validation succeeded | Image passes all checks |
+| 1 | Validation failed | Image is too old, runs as root, exposes unauthorized ports |
+| 2 | Execution error | Invalid config file, image not found, invalid arguments |
+
+## Output Formats
+
+All commands support both human-readable text and JSON output:
+
+```bash
+# Human-readable output (default)
+check-image age nginx:latest --max-age 30
+
+# JSON output for scripting
+check-image age nginx:latest --max-age 30 --output json
+```
+
+JSON output includes full validation details and is ideal for:
+- CI/CD pipeline integration
+- Automated reporting
+- Programmatic analysis
+- Webhook payloads
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Installation" icon="download" href="/installation">
+    Install Check Image using Homebrew, Go, Docker, or pre-built binaries
+  </Card>
+  <Card title="Quick Start" icon="rocket" href="/quickstart">
+    Get started with your first image validation in 3 minutes
+  </Card>
+</CardGroup>

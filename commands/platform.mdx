@@ -1,0 +1,217 @@
+---
+title: platform
+description: Validate that the image platform is in the allowed list
+---
+
+## Description
+
+Validates that the container image platform (OS and architecture) is in the allowed list. The platform string is constructed as `OS/Architecture` (e.g., `linux/amd64`) or `OS/Architecture/Variant` for architectures with variants (e.g., `linux/arm/v7`).
+
+The check validates the **resolved image's platform** — the platform of the concrete image that would actually be executed, not a manifest index listing.
+
+## Command Syntax
+
+```bash
+check-image platform <image> --allowed-platforms <platforms> [flags]
+```
+
+## Flags
+
+| Flag | Type | Required | Description |
+|------|------|----------|-------------|
+| `--allowed-platforms` | string | Yes | Comma-separated list of allowed platforms or `@<file>` with JSON or YAML array |
+| `--output` / `-o` | string | No | Output format: `text` or `json` (default: `text`) |
+| `--log-level` | string | No | Log level (trace, debug, info, warn, error, fatal, panic) |
+
+## Usage Examples
+
+### Comma-Separated List
+
+```bash
+check-image platform nginx:latest --allowed-platforms linux/amd64,linux/arm64
+```
+
+### From JSON File
+
+```bash
+check-image platform nginx:latest --allowed-platforms @config/allowed-platforms.json
+```
+
+### From YAML File
+
+```bash
+check-image platform nginx:latest --allowed-platforms @config/allowed-platforms.yaml
+```
+
+### From stdin
+
+```bash
+cat config/allowed-platforms.json | check-image platform nginx:latest --allowed-platforms @-
+```
+
+### JSON Output
+
+```bash
+check-image platform nginx:latest --allowed-platforms linux/amd64,linux/arm64 --output json
+```
+
+### OCI Layout
+
+```bash
+check-image platform oci:/path/to/layout:1.0 --allowed-platforms linux/amd64
+```
+
+### OCI Archive
+
+```bash
+check-image platform oci-archive:/path/to/image.tar:latest --allowed-platforms @config/allowed-platforms.yaml
+```
+
+### Docker Archive
+
+```bash
+check-image platform docker-archive:/path/to/image.tar:tag --allowed-platforms linux/amd64,linux/arm64
+```
+
+## Example Output
+
+### Text Format (Success)
+
+```
+✓ Platform linux/amd64 is in the allowed list
+
+Platform: linux/amd64
+Allowed Platforms:
+  - linux/amd64
+  - linux/arm64
+```
+
+### Text Format (Failure)
+
+```
+✗ Platform linux/386 is not in the allowed list
+
+Platform: linux/386
+Allowed Platforms:
+  - linux/amd64
+  - linux/arm64
+```
+
+### JSON Format (Success)
+
+```json
+{
+  "check": "platform",
+  "image": "nginx:latest",
+  "passed": true,
+  "message": "Platform linux/amd64 is in the allowed list",
+  "details": {
+    "platform": "linux/amd64",
+    "allowed-platforms": [
+      "linux/amd64",
+      "linux/arm64"
+    ]
+  }
+}
+```
+
+### JSON Format (Failure)
+
+```json
+{
+  "check": "platform",
+  "image": "nginx:latest",
+  "passed": false,
+  "message": "Platform linux/386 is not in the allowed list",
+  "details": {
+    "platform": "linux/386",
+    "allowed-platforms": [
+      "linux/amd64",
+      "linux/arm64"
+    ]
+  }
+}
+```
+
+## Platform File Format
+
+### YAML Example
+
+```yaml
+allowed-platforms:
+  - linux/amd64
+  - linux/arm64
+```
+
+### JSON Example
+
+```json
+{
+  "allowed-platforms": [
+    "linux/amd64",
+    "linux/arm64"
+  ]
+}
+```
+
+## Common Platform Strings
+
+| Platform | Description |
+|----------|-------------|
+| `linux/amd64` | 64-bit x86 Linux |
+| `linux/arm64` | 64-bit ARM Linux (also known as aarch64) |
+| `linux/arm/v7` | 32-bit ARM Linux v7 |
+| `linux/arm/v6` | 32-bit ARM Linux v6 |
+| `linux/386` | 32-bit x86 Linux |
+| `linux/ppc64le` | 64-bit PowerPC little-endian Linux |
+| `linux/s390x` | IBM System z Linux |
+| `darwin/amd64` | 64-bit x86 macOS |
+| `darwin/arm64` | 64-bit ARM macOS (Apple Silicon) |
+| `windows/amd64` | 64-bit x86 Windows |
+
+## Platform String Format
+
+### Standard Format
+
+```
+OS/Architecture
+```
+
+Examples: `linux/amd64`, `darwin/arm64`, `windows/amd64`
+
+### With Variant
+
+```
+OS/Architecture/Variant
+```
+
+Examples: `linux/arm/v7`, `linux/arm/v6`
+
+### Source Fields
+
+The platform string is constructed from the image configuration:
+- `configFile.OS` - Operating system (e.g., `linux`, `darwin`, `windows`)
+- `configFile.Architecture` - CPU architecture (e.g., `amd64`, `arm64`, `arm`)
+- `configFile.Variant` - Architecture variant (e.g., `v7`, `v6`) (optional)
+
+## Exit Codes
+
+| Exit Code | Meaning | Example |
+|-----------|---------|---------|----------|
+| 0 | Platform is allowed | Platform is in the allowed list |
+| 1 | Platform not allowed | Platform is not in the allowed list |
+| 2 | Execution error | Invalid arguments, image not found, `--allowed-platforms` missing |
+
+## Related Configuration Files
+
+- `config/allowed-platforms.yaml` - Sample allowed platforms in YAML format
+- `config/allowed-platforms.json` - Sample allowed platforms in JSON format
+
+## Notes
+
+- The `--allowed-platforms` flag is **required**.
+- Supports comma-separated values, file references (`@file`), and stdin (`@-`).
+- Validates the **resolved image's platform**, not a manifest index.
+- For multi-arch images, the platform of the specific image pulled for your system is validated.
+- Platform strings are case-sensitive.
+- Variant is optional and only included if present in the image configuration.

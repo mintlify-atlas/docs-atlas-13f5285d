@@ -1,0 +1,267 @@
+---
+title: Image Reference Syntax
+description: Understand how to reference container images from different sources using transport prefixes
+---
+
+Check Image supports multiple image sources using a transport-based syntax compatible with [Skopeo](https://github.com/containers/skopeo). This allows you to validate images from Docker registries, OCI layout directories, and archive files.
+
+## Transport Prefixes
+
+Transport prefixes tell Check Image where to load the image from. When no prefix is specified, the tool tries the local Docker daemon first, then falls back to a remote registry.
+
+### Supported Transports
+
+<CardGroup cols={2}>
+  <Card title="docker://" icon="docker">
+    Docker daemon or remote registry (default)
+  </Card>
+  <Card title="oci:" icon="folder">
+    OCI layout directory on disk
+  </Card>
+  <Card title="oci-archive:" icon="file-zipper">
+    OCI tarball archive
+  </Card>
+  <Card title="docker-archive:" icon="file-archive">
+    Docker tarball created with `docker save`
+  </Card>
+</CardGroup>
+
+## Default Behavior (No Prefix)
+
+When you don't specify a transport prefix, Check Image uses a fallback strategy:
+
+1. **Try Docker daemon**: Looks for the image in the local Docker daemon
+2. **Fall back to registry**: If not found locally, fetches from the remote registry
+
+<CodeGroup>
+```bash Basic usage
+check-image age nginx:latest
+check-image size docker.io/nginx:latest --max-size 100
+```
+
+```bash Tag defaults to 'latest'
+check-image age nginx
+check-image registry ghcr.io/kubernetes-sigs/kind/node --registry-policy config/registry-policy.json
+```
+</CodeGroup>
+
+<Note>
+  When no tag is specified, `:latest` is automatically appended to the image reference.
+</Note>
+
+## OCI Layout Directory (`oci:`)
+
+Load images from an [OCI image layout](https://github.com/opencontainers/image-spec/blob/main/image-layout.md) directory on disk. This is useful for validating images that have been built or exported to a directory structure.
+
+### Syntax
+
+```
+oci:/path/to/layout:tag
+oci:/path/to/layout@sha256:digest
+```
+
+### Examples
+
+<CodeGroup>
+```bash With tag
+check-image age oci:/path/to/layout:latest
+check-image size oci:./nginx-layout:v1.23 --max-size 100
+```
+
+```bash With digest
+check-image age oci:/path/to/layout@sha256:abc123...
+check-image root-user oci:./my-app@sha256:def456...
+```
+</CodeGroup>
+
+<Warning>
+  When using the `oci:` transport, you must specify either a tag or a digest. The tool does not fall back to other sources.
+</Warning>
+
+## OCI Archive (`oci-archive:`)
+
+Load images from OCI tarball archives. The archive is extracted to a temporary directory during processing and automatically cleaned up afterward.
+
+### Syntax
+
+```
+oci-archive:/path/to/image.tar:tag
+oci-archive:/path/to/image.tar@sha256:digest
+```
+
+### Examples
+
+<CodeGroup>
+```bash With tag
+check-image age oci-archive:/path/to/image.tar:latest
+check-image size oci-archive:./exported-image.tar:1.0 --max-size 100
+```
+
+```bash With digest
+check-image age oci-archive:./image.tar@sha256:abc123...
+```
+</CodeGroup>
+
+### Security Features
+
+<AccordionGroup>
+  <Accordion title="Path Traversal Protection">
+    The extraction process validates all paths to prevent malicious archives from writing files outside the temporary directory.
+  </Accordion>
+  
+  <Accordion title="Decompression Limit">
+    A 5GB decompression limit prevents decompression bomb attacks. If an archive expands beyond this limit, the operation is aborted.
+  </Accordion>
+  
+  <Accordion title="Supported Formats">
+    Both gzipped (`.gz`, `.tgz`) and uncompressed tarballs are supported.
+  </Accordion>
+</AccordionGroup>
+
+### Creating OCI Archives
+
+<CodeGroup>
+```bash Using skopeo
+skopeo copy docker://nginx:latest oci-archive:nginx.tar:latest
+```
+
+```bash Using podman
+podman save --format oci-archive -o nginx.tar nginx:latest
+```
+</CodeGroup>
+
+## Docker Archive (`docker-archive:`)
+
+Load images from Docker tarball archives created with `docker save`. This format is compatible with Docker's native save/load mechanism.
+
+### Syntax
+
+```
+docker-archive:/path/to/saved.tar:image:tag
+```
+
+<Note>
+  The tag includes the full image name and tag as it appears in the archive (e.g., `nginx:latest`, `myapp:2.0`).
+</Note>
+
+### Examples
+
+<CodeGroup>
+```bash Basic usage
+check-image age docker-archive:/path/to/saved.tar:nginx:latest
+check-image size docker-archive:./backup.tar:myapp:2.0
+```
+
+```bash Multi-image archives
+check-image healthcheck docker-archive:./export.tar:app:v1.0
+check-image root-user docker-archive:./export.tar:nginx:alpine
+```
+</CodeGroup>
+
+### Creating Docker Archives
+
+<CodeGroup>
+```bash Using docker
+docker save -o nginx.tar nginx:latest
+docker save -o multi.tar nginx:latest alpine:latest
+```
+
+```bash Using podman (Docker-compatible)
+podman save --format docker-archive -o nginx.tar nginx:latest
+```
+</CodeGroup>
+
+## Fallback Behavior
+
+<Warning>
+  **Important**: When you use an explicit transport prefix (`oci:`, `oci-archive:`, `docker-archive:`), Check Image only attempts to load from that source. There is no fallback to other sources.
+</Warning>
+
+<Tabs>
+  <Tab title="With Prefix">
+    ```bash
+    # Only tries OCI layout - no fallback
+    check-image age oci:/path/to/layout:latest
+    
+    # Only tries OCI archive - no fallback
+    check-image size oci-archive:./image.tar:latest
+    
+    # Only tries Docker archive - no fallback
+    check-image age docker-archive:./saved.tar:nginx:latest
+    ```
+  </Tab>
+  
+  <Tab title="Without Prefix">
+    ```bash
+    # Tries Docker daemon, then falls back to registry
+    check-image age nginx:latest
+    
+    # Tries local daemon first, then docker.io registry
+    check-image size nginx:latest --max-size 100
+    ```
+  </Tab>
+</Tabs>
+
+## Special Cases
+
+### Registry Command Validation
+
+The `registry` command validates that an image comes from a trusted registry. This check is automatically skipped for non-registry transports:
+
+```bash
+# Registry check runs
+check-image registry nginx:latest --registry-policy policy.json
+
+# Registry check is skipped (not applicable)
+check-image registry oci:./layout:latest --registry-policy policy.json
+```
+
+<Info>
+  When the registry check is skipped due to transport type, the validation passes by default and the output indicates the check was skipped.
+</Info>
+
+### Windows Path Support
+
+The transport parser handles Windows drive letters correctly:
+
+```bash Windows paths
+check-image age oci:C:\images\layout:latest
+check-image size oci-archive:D:\exports\image.tar:v1.0
+```
+
+## Best Practices
+
+<Steps>
+  <Step title="Use explicit transports for predictable behavior">
+    When working with files or directories, always use the appropriate transport prefix (`oci:`, `oci-archive:`, `docker-archive:`) to avoid ambiguity.
+  </Step>
+  
+  <Step title="Prefer OCI formats for portability">
+    OCI layout and OCI archives are vendor-neutral formats that work across different container runtimes.
+  </Step>
+  
+  <Step title="Specify digests for reproducibility">
+    When possible, use digest references (`@sha256:...`) instead of tags for guaranteed reproducibility.
+  </Step>
+  
+  <Step title="Clean up archives after validation">
+    Archive files can be large. Remove them after validation to save disk space.
+  </Step>
+</Steps>
+
+## Related Topics
+
+<CardGroup cols={2}>
+  <Card title="Authentication" icon="key" href="/usage/authentication">
+    Learn how to authenticate with private registries
+  </Card>
+  <Card title="Configuration Files" icon="file-code" href="/usage/configuration-files">
+    Understand policy and configuration file formats
+  </Card>
+  <Card title="Output Formats" icon="terminal" href="/usage/output-formats">
+    Control output format and color modes
+  </Card>
+  <Card title="Commands" icon="bolt" href="/commands/overview">
+    Explore all available validation commands
+  </Card>
+</CardGroup>

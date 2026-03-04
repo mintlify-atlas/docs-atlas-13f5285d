@@ -1,0 +1,825 @@
+---
+title: 'CI/CD Integration'
+description: 'Integrate Check Image into GitLab CI, CircleCI, Jenkins, and other CI/CD platforms'
+icon: 'gears'
+---
+
+## Overview
+
+Check Image is designed to work seamlessly with any CI/CD platform. This guide shows how to integrate Check Image into popular CI/CD systems using the Docker image or pre-built binaries.
+
+## General Integration Patterns
+
+### Exit Codes
+
+Check Image uses standard exit codes that all CI/CD systems understand:
+
+| Exit Code | Meaning | CI Behavior |
+|-----------|---------|-------------|
+| 0 | Validation passed | Build succeeds |
+| 1 | Validation failed | Build fails |
+| 2 | Execution error | Build fails |
+
+These exit codes propagate automatically in all CI/CD systems.
+
+### JSON Output Parsing
+
+All CI/CD platforms can parse JSON output for advanced workflows:
+
+```bash
+# Capture JSON output
+check-image all nginx:latest -o json > results.json
+
+# Parse with jq
+PASSED=$(jq -r '.passed' results.json)
+FAILED_CHECKS=$(jq -r '.summary.failed' results.json)
+
+if [ "$PASSED" = "false" ]; then
+  echo "Image validation failed: $FAILED_CHECKS checks failed"
+  exit 1
+fi
+```
+
+### Using Docker Image
+
+The Docker image works on any CI/CD platform with Docker support:
+
+```bash
+docker run --rm \
+  -v "$(pwd)/config:/config:ro" \
+  ghcr.io/jarfernandez/check-image:0.19.4 all nginx:latest \
+  --config /config/config.yaml
+```
+
+### Using Pre-Built Binaries
+
+Download and cache binaries for faster CI/CD pipelines:
+
+```bash
+# Download binary
+VERSION=0.19.4
+curl -sL "https://github.com/jarfernandez/check-image/releases/download/v${VERSION}/check-image_${VERSION}_linux_amd64.tar.gz" | tar xz
+chmod +x check-image
+
+# Run validation
+./check-image all nginx:latest --config config.yaml
+```
+
+## GitLab CI/CD
+
+### Basic Pipeline
+
+```yaml
+# .gitlab-ci.yml
+stages:
+  - build
+  - validate
+  - deploy
+
+variables:
+  IMAGE_TAG: $CI_REGISTRY_IMAGE:$CI_COMMIT_SHA
+
+build:
+  stage: build
+  image: docker:latest
+  services:
+    - docker:dind
+  script:
+    - docker build -t $IMAGE_TAG .
+    - docker push $IMAGE_TAG
+
+validate:
+  stage: validate
+  image: ghcr.io/jarfernandez/check-image:0.19.4
+  script:
+    - check-image all $IMAGE_TAG
+        --registry-policy config/registry-policy.yaml
+        --labels-policy config/labels-policy.yaml
+        --max-age 30
+        --max-size 500
+        -o json | tee results.json
+  artifacts:
+    reports:
+      dotenv: results.json
+    paths:
+      - results.json
+    expire_in: 1 week
+
+deploy:
+  stage: deploy
+  script:
+    - echo "Deploying validated image..."
+  only:
+    - main
+```
+
+### With Policy Files
+
+```yaml
+validate-image:
+  stage: validate
+  image: ghcr.io/jarfernandez/check-image:0.19.4
+  before_script:
+    - echo "$CI_REGISTRY_PASSWORD" | docker login -u $CI_REGISTRY_USER --password-stdin $CI_REGISTRY
+  script:
+    - check-image all $CI_REGISTRY_IMAGE:$CI_COMMIT_SHA
+        --config .gitlab/check-image-config.yaml
+        -o json
+  rules:
+    - if: $CI_PIPELINE_SOURCE == "merge_request_event"
+    - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
+```
+
+### Matrix Validation
+
+```yaml
+validate-images:
+  stage: validate
+  image: ghcr.io/jarfernandez/check-image:0.19.4
+  parallel:
+    matrix:
+      - IMAGE: ["nginx:latest", "alpine:latest", "ubuntu:22.04"]
+  script:
+    - check-image all $IMAGE
+        --max-age 90
+        --max-size 200
+        --checks age,size,root-user
+```
+
+### Soft Failure
+
+```yaml
+validate-advisory:
+  stage: validate
+  image: ghcr.io/jarfernandez/check-image:0.19.4
+  script:
+    - check-image all nginx:latest --config config.yaml -o json || echo "Validation failed"
+  allow_failure: true
+```
+
+## CircleCI
+
+### Basic Workflow
+
+```yaml
+# .circleci/config.yml
+version: 2.1
+
+orbs:
+  docker: circleci/docker@2.2.0
+
+jobs:
+  build:
+    docker:
+      - image: cimg/base:stable
+    steps:
+      - checkout
+      - setup_remote_docker
+      - run:
+          name: Build image
+          command: |
+            docker build -t myapp:${CIRCLE_SHA1} .
+      - run:
+          name: Validate image
+          command: |
+            docker run --rm \
+              -v $(pwd)/config:/config:ro \
+              ghcr.io/jarfernandez/check-image:0.19.4 all myapp:${CIRCLE_SHA1} \
+              --config /config/config.yaml \
+              -o json | tee /tmp/results.json
+      - store_artifacts:
+          path: /tmp/results.json
+          destination: validation-results
+
+workflows:
+  build-validate:
+    jobs:
+      - build
+```
+
+### With Pre-Built Binary
+
+```yaml
+jobs:
+  validate:
+    docker:
+      - image: cimg/base:stable
+    steps:
+      - checkout
+      - run:
+          name: Install check-image
+          command: |
+            VERSION=0.19.4
+            curl -sL "https://github.com/jarfernandez/check-image/releases/download/v${VERSION}/check-image_${VERSION}_linux_amd64.tar.gz" | tar xz
+            chmod +x check-image
+            sudo mv check-image /usr/local/bin/
+      - run:
+          name: Validate image
+          command: |
+            check-image all nginx:latest \
+              --registry-policy config/registry-policy.yaml \
+              --max-age 30 \
+              -o json
+```
+
+### With Caching
+
+```yaml
+jobs:
+  validate:
+    docker:
+      - image: cimg/base:stable
+    steps:
+      - checkout
+      - restore_cache:
+          keys:
+            - check-image-v1-{{ arch }}
+      - run:
+          name: Install check-image (if not cached)
+          command: |
+            if [ ! -f ~/bin/check-image ]; then
+              VERSION=0.19.4
+              mkdir -p ~/bin
+              curl -sL "https://github.com/jarfernandez/check-image/releases/download/v${VERSION}/check-image_${VERSION}_linux_amd64.tar.gz" | tar xz -C ~/bin
+              chmod +x ~/bin/check-image
+            fi
+      - save_cache:
+          key: check-image-v1-{{ arch }}
+          paths:
+            - ~/bin/check-image
+      - run:
+          name: Validate
+          command: ~/bin/check-image all nginx:latest --config config.yaml
+```
+
+## Jenkins
+
+### Declarative Pipeline
+
+```groovy
+// Jenkinsfile
+pipeline {
+    agent any
+    
+    environment {
+        IMAGE_TAG = "myapp:${env.BUILD_NUMBER}"
+        REGISTRY = 'ghcr.io/myorg'
+    }
+    
+    stages {
+        stage('Build') {
+            steps {
+                script {
+                    docker.build("${IMAGE_TAG}")
+                }
+            }
+        }
+        
+        stage('Validate') {
+            agent {
+                docker {
+                    image 'ghcr.io/jarfernandez/check-image:0.19.4'
+                    reuseNode true
+                }
+            }
+            steps {
+                sh '''
+                    check-image all ${IMAGE_TAG} \
+                        --config config/config.yaml \
+                        --max-age 30 \
+                        --max-size 500 \
+                        -o json | tee results.json
+                '''
+                archiveArtifacts artifacts: 'results.json', fingerprint: true
+            }
+        }
+        
+        stage('Push') {
+            when {
+                expression { currentBuild.result == null || currentBuild.result == 'SUCCESS' }
+            }
+            steps {
+                script {
+                    docker.withRegistry("https://${REGISTRY}", 'registry-credentials') {
+                        docker.image("${IMAGE_TAG}").push('latest')
+                    }
+                }
+            }
+        }
+    }
+    
+    post {
+        failure {
+            script {
+                if (fileExists('results.json')) {
+                    def results = readJSON file: 'results.json'
+                    echo "Validation failed: ${results.summary.failed} checks failed"
+                }
+            }
+        }
+    }
+}
+```
+
+### Scripted Pipeline
+
+```groovy
+node {
+    def imageTag = "myapp:${env.BUILD_NUMBER}"
+    
+    stage('Checkout') {
+        checkout scm
+    }
+    
+    stage('Build') {
+        docker.build(imageTag)
+    }
+    
+    stage('Validate') {
+        docker.image('ghcr.io/jarfernandez/check-image:0.19.4').inside {
+            sh """
+                check-image all ${imageTag} \
+                    --registry-policy config/registry-policy.yaml \
+                    --labels-policy config/labels-policy.yaml \
+                    --skip secrets \
+                    -o json > results.json
+            """
+        }
+        archiveArtifacts artifacts: 'results.json'
+    }
+    
+    stage('Deploy') {
+        echo "Deploying ${imageTag}"
+    }
+}
+```
+
+### With Binary Installation
+
+```groovy
+pipeline {
+    agent any
+    
+    stages {
+        stage('Setup') {
+            steps {
+                sh '''
+                    VERSION=0.19.4
+                    curl -sL "https://github.com/jarfernandez/check-image/releases/download/v${VERSION}/check-image_${VERSION}_linux_amd64.tar.gz" | tar xz
+                    chmod +x check-image
+                '''
+            }
+        }
+        
+        stage('Validate') {
+            steps {
+                sh './check-image all nginx:latest --config config.yaml -o json'
+            }
+        }
+    }
+}
+```
+
+## Azure DevOps
+
+### Basic Pipeline
+
+```yaml
+# azure-pipelines.yml
+trigger:
+  - main
+
+pool:
+  vmImage: 'ubuntu-latest'
+
+variables:
+  imageTag: '$(Build.Repository.Name):$(Build.BuildId)'
+
+stages:
+  - stage: Build
+    jobs:
+      - job: BuildImage
+        steps:
+          - task: Docker@2
+            inputs:
+              command: build
+              Dockerfile: '**/Dockerfile'
+              tags: $(imageTag)
+
+  - stage: Validate
+    jobs:
+      - job: ValidateImage
+        steps:
+          - script: |
+              docker run --rm \
+                -v $(System.DefaultWorkingDirectory)/config:/config:ro \
+                ghcr.io/jarfernandez/check-image:0.19.4 all $(imageTag) \
+                --config /config/config.yaml \
+                -o json > $(Build.ArtifactStagingDirectory)/results.json
+            displayName: 'Validate container image'
+          
+          - task: PublishBuildArtifacts@1
+            inputs:
+              pathToPublish: '$(Build.ArtifactStagingDirectory)'
+              artifactName: 'validation-results'
+
+  - stage: Deploy
+    condition: succeeded()
+    jobs:
+      - job: DeployImage
+        steps:
+          - script: echo "Deploying image..."
+            displayName: 'Deploy'
+```
+
+### With Script Task
+
+```yaml
+steps:
+  - task: Bash@3
+    displayName: 'Install and run check-image'
+    inputs:
+      targetType: 'inline'
+      script: |
+        VERSION=0.19.4
+        curl -sL "https://github.com/jarfernandez/check-image/releases/download/v${VERSION}/check-image_${VERSION}_linux_amd64.tar.gz" | tar xz
+        chmod +x check-image
+        
+        ./check-image all $(imageTag) \
+          --registry-policy config/registry-policy.yaml \
+          --max-age 30 \
+          -o json
+```
+
+## Bitbucket Pipelines
+
+### Basic Pipeline
+
+```yaml
+# bitbucket-pipelines.yml
+image: docker:latest
+
+pipelines:
+  default:
+    - step:
+        name: Build and validate
+        services:
+          - docker
+        script:
+          - docker build -t myapp:$BITBUCKET_COMMIT .
+          - docker run --rm
+              -v $(pwd)/config:/config:ro
+              ghcr.io/jarfernandez/check-image:0.19.4 all myapp:$BITBUCKET_COMMIT
+              --config /config/config.yaml
+              -o json | tee results.json
+        artifacts:
+          - results.json
+    
+    - step:
+        name: Deploy
+        deployment: production
+        script:
+          - echo "Deploying image..."
+```
+
+### With Custom Docker Image
+
+```yaml
+pipelines:
+  default:
+    - step:
+        name: Validate
+        image: ghcr.io/jarfernandez/check-image:0.19.4
+        script:
+          - check-image all nginx:latest
+              --registry-policy config/registry-policy.yaml
+              --labels-policy config/labels-policy.yaml
+              --skip secrets
+              -o json
+```
+
+## Travis CI
+
+### Basic Configuration
+
+```yaml
+# .travis.yml
+language: minimal
+
+services:
+  - docker
+
+env:
+  global:
+    - IMAGE_TAG=myapp:$TRAVIS_COMMIT
+
+before_script:
+  - docker build -t $IMAGE_TAG .
+
+script:
+  - docker run --rm
+      -v $(pwd)/config:/config:ro
+      ghcr.io/jarfernandez/check-image:0.19.4 all $IMAGE_TAG
+      --config /config/config.yaml
+      -o json | tee results.json
+
+after_success:
+  - cat results.json
+```
+
+## Drone CI
+
+### Pipeline Configuration
+
+```yaml
+# .drone.yml
+kind: pipeline
+type: docker
+name: default
+
+steps:
+  - name: build
+    image: docker:latest
+    volumes:
+      - name: dockersock
+        path: /var/run/docker.sock
+    commands:
+      - docker build -t myapp:${DRONE_COMMIT_SHA} .
+
+  - name: validate
+    image: ghcr.io/jarfernandez/check-image:0.19.4
+    commands:
+      - check-image all myapp:${DRONE_COMMIT_SHA}
+          --config config/config.yaml
+          --max-age 30
+          --max-size 500
+          -o json
+
+  - name: deploy
+    image: plugins/docker
+    settings:
+      repo: myorg/myapp
+      tags: latest
+    when:
+      branch:
+        - main
+
+volumes:
+  - name: dockersock
+    host:
+      path: /var/run/docker.sock
+```
+
+## Best Practices
+
+### 1. Use Configuration Files
+
+Store check configuration in version control:
+
+```bash
+check-image all $IMAGE --config .ci/check-image-config.yaml
+```
+
+Benefits:
+- Consistent validation across all pipelines
+- Easy to update and review changes
+- Self-documenting security standards
+
+### 2. Cache Binaries
+
+Cache the check-image binary to speed up builds:
+
+```bash
+# Example for most CI systems
+if [ ! -f ~/bin/check-image ]; then
+  VERSION=0.19.4
+  mkdir -p ~/bin
+  curl -sL "https://github.com/jarfernandez/check-image/releases/download/v${VERSION}/check-image_${VERSION}_linux_amd64.tar.gz" | tar xz -C ~/bin
+fi
+
+~/bin/check-image all nginx:latest
+```
+
+### 3. Generate Validation Reports
+
+Capture JSON output for reporting and auditing:
+
+```bash
+check-image all $IMAGE --config config.yaml -o json | tee validation-report.json
+
+# Parse and display summary
+jq '.summary' validation-report.json
+```
+
+### 4. Fail-Fast for Critical Checks
+
+Use `--fail-fast` to stop on first failure:
+
+```bash
+check-image all $IMAGE --config config.yaml --fail-fast
+```
+
+### 5. Pin to Specific Versions
+
+Use specific version tags in production:
+
+```bash
+# ✓ Good: Pin to specific version
+image: ghcr.io/jarfernandez/check-image:0.19.4
+
+# ✗ Avoid: Using latest in production
+image: ghcr.io/jarfernandez/check-image:latest
+```
+
+### 6. Validate Before Push
+
+Validate images before pushing to registries:
+
+```bash
+# Build
+docker build -t myapp:$VERSION .
+
+# Validate
+check-image all myapp:$VERSION --config config.yaml
+
+# Push only if validation passed
+if [ $? -eq 0 ]; then
+  docker push myapp:$VERSION
+fi
+```
+
+### 7. Use Soft Failures for Warnings
+
+Use `continue-on-error` or `allow_failure` for advisory checks:
+
+```bash
+# Run checks but don't fail the build
+check-image all $IMAGE --config config.yaml || echo "Validation warnings detected"
+```
+
+### 8. Integrate with Notification Systems
+
+Send alerts on validation failures:
+
+```bash
+if ! check-image all $IMAGE --config config.yaml -o json > results.json; then
+  curl -X POST $WEBHOOK_URL \
+    -H 'Content-Type: application/json' \
+    -d @results.json
+  exit 1
+fi
+```
+
+## Exit Code Handling
+
+### Bash Script Example
+
+```bash
+#!/bin/bash
+
+IMAGE="nginx:latest"
+
+check-image all $IMAGE --config config.yaml -o json > results.json
+EXIT_CODE=$?
+
+case $EXIT_CODE in
+  0)
+    echo "✓ Image validation passed"
+    PASSED=$(jq -r '.summary.passed' results.json)
+    echo "  Passed checks: $PASSED"
+    ;;
+  1)
+    echo "✗ Image validation failed"
+    FAILED=$(jq -r '.summary.failed' results.json)
+    echo "  Failed checks: $FAILED"
+    jq -r '.checks[] | select(.passed == false) | "  - \(.check): \(.message)"' results.json
+    exit 1
+    ;;
+  2)
+    echo "✗ Execution error"
+    jq -r '.checks[] | select(.passed == null) | "  - \(.check): \(.message)"' results.json
+    exit 2
+    ;;
+esac
+```
+
+## JSON Output Examples
+
+### Success Response
+
+```json
+{
+  "image": "nginx:latest",
+  "passed": true,
+  "checks": [
+    {
+      "check": "age",
+      "image": "nginx:latest",
+      "passed": true,
+      "message": "Image is less than 90 days old",
+      "details": {
+        "created-at": "2026-02-15T14:23:45Z",
+        "age-days": 17.3,
+        "max-age": 90
+      }
+    }
+  ],
+  "summary": {
+    "total": 8,
+    "passed": 8,
+    "failed": 0,
+    "errored": 0,
+    "skipped": ["registry", "labels"]
+  }
+}
+```
+
+### Failure Response
+
+```json
+{
+  "image": "nginx:latest",
+  "passed": false,
+  "checks": [
+    {
+      "check": "root-user",
+      "image": "nginx:latest",
+      "passed": false,
+      "message": "Image runs as root user",
+      "details": {
+        "user": "root",
+        "uid": 0
+      }
+    }
+  ],
+  "summary": {
+    "total": 8,
+    "passed": 7,
+    "failed": 1,
+    "errored": 0,
+    "skipped": []
+  }
+}
+```
+
+### Parsing JSON with jq
+
+```bash
+# Get overall result
+jq -r '.passed' results.json
+
+# Count failed checks
+jq -r '.summary.failed' results.json
+
+# List failed check names
+jq -r '.checks[] | select(.passed == false) | .check' results.json
+
+# Get detailed failure messages
+jq -r '.checks[] | select(.passed == false) | "\(.check): \(.message)"' results.json
+
+# Extract specific check result
+jq -r '.checks[] | select(.check == "age") | .passed' results.json
+```
+
+## Troubleshooting
+
+### Image Not Found
+
+```bash
+# Ensure image exists locally or in registry
+docker images | grep myapp
+
+# Or use registry API
+curl -s https://registry.hub.docker.com/v2/repositories/library/nginx/tags/ | jq '.results[].name'
+```
+
+### Permission Denied on Config Files
+
+```bash
+# Ensure files are readable
+chmod 644 config/*.yaml
+
+# Verify file paths in CI/CD
+ls -la config/
+```
+
+### Binary Download Failures
+
+```bash
+# Check release exists
+curl -sI https://github.com/jarfernandez/check-image/releases/download/v0.19.4/check-image_0.19.4_linux_amd64.tar.gz
+
+# Verify checksum
+curl -sL https://github.com/jarfernandez/check-image/releases/download/v0.19.4/checksums.txt | grep linux_amd64
+```
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Docker Integration" icon="docker" href="/integrations/docker">
+    Use Check Image with Docker CLI
+  </Card>
+  <Card title="GitHub Actions" icon="github" href="/integrations/github-actions">
+    Validate images in GitHub workflows
+  </Card>
+</CardGroup>

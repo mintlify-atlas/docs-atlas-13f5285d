@@ -1,0 +1,305 @@
+---
+title: labels
+description: Validate that the image has required labels with correct values
+---
+
+## Description
+
+Validates that the container image has required labels (OCI annotations) with correct values. Supports three validation modes: existence checks, exact value matches, and pattern (regex) matches.
+
+## Command Syntax
+
+```bash
+check-image labels <image> --labels-policy <file> [flags]
+```
+
+## Flags
+
+| Flag | Type | Required | Description |
+|------|------|----------|-------------|
+| `--labels-policy` | string | Yes | Labels policy file (JSON or YAML) |
+| `--output` / `-o` | string | No | Output format: `text` or `json` (default: `text`) |
+| `--log-level` | string | No | Log level (trace, debug, info, warn, error, fatal, panic) |
+
+## Validation Modes
+
+### 1. Existence Check
+
+Label must be present with any value (only `name` specified).
+
+```yaml
+required-labels:
+  - name: "maintainer"
+```
+
+### 2. Exact Value Match
+
+Label value must exactly match the specified string (`name` and `value`).
+
+```yaml
+required-labels:
+  - name: "org.opencontainers.image.vendor"
+    value: "MyCompany"
+```
+
+### 3. Pattern Match
+
+Label value must match the regular expression (`name` and `pattern`).
+
+```yaml
+required-labels:
+  - name: "org.opencontainers.image.version"
+    pattern: "^v?\\d+\\.\\d+\\.\\d+$"
+```
+
+## Usage Examples
+
+### Basic Usage
+
+```bash
+check-image labels nginx:latest --labels-policy config/labels-policy.yaml
+```
+
+### JSON Output
+
+```bash
+check-image labels nginx:latest --labels-policy config/labels-policy.json -o json
+```
+
+### Policy from stdin
+
+```bash
+cat labels-policy.yaml | check-image labels nginx:latest --labels-policy -
+```
+
+### OCI Layout
+
+```bash
+check-image labels oci:/path/to/layout:1.0 --labels-policy config/labels-policy.json
+```
+
+## Example Output
+
+### Text Format (Success)
+
+```
+✓ All required labels are present and valid
+
+Required Labels (3):
+  - maintainer (existence check)
+  - org.opencontainers.image.vendor = MyCompany
+  - org.opencontainers.image.version (pattern: ^v?\d+\.\d+\.\d+$)
+```
+
+### Text Format (Failure)
+
+```
+✗ Image does not meet label requirements
+
+Missing Labels (1):
+  - maintainer
+
+Invalid Labels (1):
+  - org.opencontainers.image.version:
+    Expected pattern: ^v?\d+\.\d+\.\d+$
+    Actual value: latest
+    Reason: value does not match pattern
+```
+
+### JSON Format (Success)
+
+```json
+{
+  "check": "labels",
+  "image": "nginx:latest",
+  "passed": true,
+  "message": "All required labels are present and valid",
+  "details": {
+    "required-labels": [
+      {
+        "name": "maintainer"
+      },
+      {
+        "name": "org.opencontainers.image.vendor",
+        "value": "MyCompany"
+      },
+      {
+        "name": "org.opencontainers.image.version",
+        "pattern": "^v?\\d+\\.\\d+\\.\\d+$"
+      }
+    ],
+    "actual-labels": {
+      "maintainer": "John Doe",
+      "org.opencontainers.image.vendor": "MyCompany",
+      "org.opencontainers.image.version": "v1.2.3"
+    },
+    "missing-labels": [],
+    "invalid-labels": []
+  }
+}
+```
+
+### JSON Format (Failure)
+
+```json
+{
+  "check": "labels",
+  "image": "nginx:latest",
+  "passed": false,
+  "message": "Image does not meet label requirements",
+  "details": {
+    "required-labels": [
+      {
+        "name": "maintainer"
+      },
+      {
+        "name": "org.opencontainers.image.version",
+        "pattern": "^v?\\d+\\.\\d+\\.\\d+$"
+      }
+    ],
+    "actual-labels": {
+      "org.opencontainers.image.version": "latest"
+    },
+    "missing-labels": ["maintainer"],
+    "invalid-labels": [
+      {
+        "name": "org.opencontainers.image.version",
+        "actual-value": "latest",
+        "expected-pattern": "^v?\\d+\\.\\d+\\.\\d+$",
+        "reason": "value does not match pattern"
+      }
+    ]
+  }
+}
+```
+
+## Policy File Format
+
+### YAML Example
+
+```yaml
+# Labels Policy Configuration
+# This file defines required labels (OCI annotations) for container images
+
+required-labels:
+  # Existence check - label must be present with any value
+  - name: "maintainer"
+
+  # Pattern match - value must match semantic versioning regex
+  - name: "org.opencontainers.image.version"
+    pattern: "^v?\\d+\\.\\d+\\.\\d+(-[a-zA-Z0-9.]+)?(\\+[a-zA-Z0-9.]+)?$"
+
+  # Exact value match - value must exactly match the specified string
+  - name: "org.opencontainers.image.vendor"
+    value: "MyCompany"
+
+  # Additional recommended OCI labels
+  - name: "org.opencontainers.image.source"
+  - name: "org.opencontainers.image.created"
+    pattern: "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}Z$"
+```
+
+### JSON Example
+
+```json
+{
+  "required-labels": [
+    {
+      "name": "maintainer"
+    },
+    {
+      "name": "org.opencontainers.image.version",
+      "pattern": "^v?\\d+\\.\\d+\\.\\d+$"
+    },
+    {
+      "name": "org.opencontainers.image.vendor",
+      "value": "MyCompany"
+    },
+    {
+      "name": "org.opencontainers.image.source"
+    }
+  ]
+}
+```
+
+## Policy Configuration Options
+
+### Label Requirement Object
+
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| `name` | string | Yes | Label name to validate |
+| `value` | string | No | Expected exact value (exact match mode) |
+| `pattern` | string | No | Regular expression the value must match (pattern mode) |
+
+**Note:** Only one of `value` or `pattern` should be specified per label. If neither is specified, only existence is checked.
+
+## Exit Codes
+
+| Exit Code | Meaning | Example |
+|-----------|---------|---------|----------|
+| 0 | All labels valid | All required labels present and valid |
+| 1 | Labels validation failed | Missing labels or invalid values |
+| 2 | Execution error | Invalid policy file, image not found |
+
+## Common Label Patterns
+
+### Semantic Versioning
+
+```regex
+^v?\d+\.\d+\.\d+(-[a-zA-Z0-9.]+)?(\+[a-zA-Z0-9.]+)?$
+```
+
+Matches: `v1.2.3`, `1.2.3`, `v1.2.3-alpha`, `1.2.3+build.123`
+
+### ISO 8601 Date (RFC3339)
+
+```regex
+^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z$
+```
+
+Matches: `2026-03-04T12:34:56Z`
+
+### Git SHA
+
+```regex
+^[a-f0-9]{7,40}$
+```
+
+Matches: `abc1234`, `abc1234567890abcdef1234567890abcdef1234`
+
+### URL
+
+```regex
+^https?://[a-zA-Z0-9.-]+(:[0-9]+)?(/.*)?$
+```
+
+Matches: `https://github.com/user/repo`, `http://example.com:8080/path`
+
+## Recommended OCI Labels
+
+| Label | Description | Example |
+|-------|-------------|---------|----------|
+| `org.opencontainers.image.created` | Image creation timestamp | `2026-03-04T12:34:56Z` |
+| `org.opencontainers.image.authors` | Image authors | `John Doe <john@example.com>` |
+| `org.opencontainers.image.url` | Project URL | `https://github.com/user/repo` |
+| `org.opencontainers.image.source` | Source repository URL | `https://github.com/user/repo` |
+| `org.opencontainers.image.version` | Image version | `v1.2.3` |
+| `org.opencontainers.image.vendor` | Vendor name | `MyCompany` |
+| `org.opencontainers.image.licenses` | License identifier | `MIT` |
+| `org.opencontainers.image.title` | Human-readable title | `My Application` |
+| `org.opencontainers.image.description` | Description | `A container for X` |
+
+## Related Configuration Files
+
+- `config/labels-policy.yaml` - Sample labels policy in YAML format
+- `config/labels-policy.json` - Sample labels policy in JSON format
+
+## Notes
+
+- Labels policy file is **required** for this command.
+- Supports both file paths and stdin input (`-`) for dynamic policy generation.
+- Inline policy support: policy can be embedded as object in all-checks config file.
+- Regular expressions use Go regex syntax (RE2).
+- Label names are case-sensitive.
+- The check validates labels from `config.Config.Labels` in the image configuration.

@@ -1,0 +1,476 @@
+---
+title: Release Process
+description: How releases are automated with release-please and GoReleaser
+---
+
+## Overview
+
+check-image uses fully automated releases with:
+
+- **release-please**: Manages versioning, changelog, and release PRs
+- **GoReleaser**: Builds binaries for multiple platforms
+- **Docker**: Publishes multi-arch images to GHCR
+- **Homebrew**: Updates the tap formula automatically
+
+## Conventional Commits
+
+Releases are driven by commit messages following the [Conventional Commits](https://www.conventionalcommits.org/) format:
+
+```
+<type>: <description>
+
+[optional body]
+
+[optional footer]
+```
+
+### Commit Types and Version Bumps
+
+| Type | Version Bump | Changelog | Example |
+|------|--------------|-----------|----------|
+| `feat:` | Minor (0.1.0 → 0.2.0) | Yes | `feat: Add platform validation` |
+| `fix:` | Patch (0.1.0 → 0.1.1) | Yes | `fix: Handle missing config` |
+| `perf:` | Patch | Yes | `perf: Optimize image loading` |
+| `refactor:` | Patch | Yes | `refactor: Simplify auth logic` |
+| `docs:` | None | No | `docs: Update installation guide` |
+| `chore:` | None | No | `chore: Update dependencies` |
+| `ci:` | None | No | `ci: Add security scanning` |
+| `test:` | None | No | `test: Add coverage for secrets` |
+| `build:` | None | No | `build: Update GoReleaser config` |
+| `revert:` | None | No | `revert: Undo feature X` |
+
+<Info>
+Only `feat:`, `fix:`, `perf:`, and `refactor:` trigger version bumps and releases.
+</Info>
+
+### Breaking Changes
+
+For major version bumps (0.1.0 → 1.0.0), include `BREAKING CHANGE:` in the commit body:
+
+```bash
+git commit -m "feat: Change CLI flag names
+
+BREAKING CHANGE: Renamed --max-age-days to --max-age for consistency.
+Users must update their scripts and workflows."
+```
+
+### Commit Message Rules
+
+**Required:**
+- Start with a lowercase type prefix
+- Start description with uppercase letter
+- Wrap code/commands/files in backticks
+- Use present tense ("Add feature" not "Added feature")
+
+**Examples:**
+
+```bash
+# Good
+git commit -m "feat: Add support for OCI archives"
+git commit -m "fix: Handle empty `--allowed-ports` flag"
+git commit -m "docs: Update `registry` command examples"
+
+# Bad
+git commit -m "feat: add support for oci archives"  # Lowercase description
+git commit -m "fixed the auth error"  # Missing type suffix (:)
+git commit -m "Updated README"  # No type prefix
+```
+
+## Release Workflow
+
+### 1. Development Phase
+
+Developers make changes and commit with conventional commits:
+
+```bash
+git checkout -b feat/platform-validation
+# Make changes
+git commit -m "feat: Add platform validation command"
+git commit -m "test: Add tests for platform check"
+git commit -m "docs: Document platform command"
+git push origin feat/platform-validation
+gh pr create
+```
+
+### 2. Merge to Main
+
+After PR approval and CI passes, merge to `main`:
+
+```bash
+gh pr merge --squash  # or --rebase, --merge
+```
+
+### 3. Release PR Creation
+
+release-please analyzes commits since the last release and automatically:
+
+1. Calculates the next version based on commit types
+2. Generates changelog entries from commit messages
+3. Updates version references in files
+4. Creates or updates a Release PR
+
+**Release PR includes:**
+- `CHANGELOG.md` with new entries
+- `README.md` with updated version references
+- `action.yml` with updated default version
+- `.github/release-please-manifest.json` with new version
+
+**Release PR title:**
+```
+chore: Release 0.20.0
+```
+
+**Release PR label:**
+```
+autorelease: pending
+```
+
+<Warning>
+Do not manually edit the release PR. If you need changes, close it, make commits to `main`, and release-please will recreate it.
+</Warning>
+
+### 4. Release Execution
+
+When the Release PR is merged, three jobs run in sequence:
+
+#### Job 1: release-please
+
+1. Creates git tag (e.g., `v0.20.0`)
+2. Creates GitHub Release with changelog
+3. Updates PR label to `autorelease: tagged`
+4. Exports outputs: `releases_created=true`, `tag_name=v0.20.0`
+
+#### Job 2: goreleaser
+
+Depends on `release-please` job. Only runs if `releases_created == 'true'`.
+
+1. Checks out the tagged commit
+2. Runs `go mod tidy` and `go test ./...`
+3. Builds binaries for all platforms:
+   - Linux: amd64, arm64
+   - macOS: amd64, arm64
+   - Windows: amd64
+4. Injects version via ldflags:
+   ```
+   -X github.com/jarfernandez/check-image/internal/version.Version=v0.20.0
+   -X github.com/jarfernandez/check-image/internal/version.Commit=a1b2c3d
+   -X github.com/jarfernandez/check-image/internal/version.BuildDate=2026-03-04T12:34:56Z
+   ```
+5. Creates archives (`.tar.gz` for Unix, `.zip` for Windows)
+6. Generates checksums
+7. Uploads assets to GitHub Release via `mode: append`
+8. Updates Homebrew tap formula at `jarfernandez/homebrew-tap`
+
+#### Job 3: docker
+
+Depends on both `release-please` and `goreleaser` jobs.
+
+1. Checks out the tagged commit
+2. Lints Dockerfile with hadolint
+3. Builds single-arch image (linux/amd64) for scanning
+4. Runs Trivy security scan (fails on CRITICAL/HIGH)
+5. Validates image with check-image (dogfooding):
+   ```bash
+   check-image all check-image:scan \
+     --checks size,root-user,ports,secrets \
+     --max-size 20
+   ```
+6. Builds and pushes multi-arch image (linux/amd64, linux/arm64)
+7. Tags with semver versions:
+   - `ghcr.io/jarfernandez/check-image:0.20.0`
+   - `ghcr.io/jarfernandez/check-image:0.20`
+   - `ghcr.io/jarfernandez/check-image:0`
+   - `ghcr.io/jarfernandez/check-image:latest`
+
+## Configuration Files
+
+### .github/release-please-config.json
+
+Configures release-please behavior:
+
+```json
+{
+  "packages": {
+    ".": {
+      "release-type": "go",
+      "bump-minor-pre-major": true,
+      "bump-patch-for-minor-pre-major": false,
+      "changelog-sections": [
+        {"type": "feat", "section": "Features", "hidden": false},
+        {"type": "fix", "section": "Bug Fixes", "hidden": false},
+        {"type": "perf", "section": "Performance", "hidden": false},
+        {"type": "refactor", "section": "Refactoring", "hidden": false},
+        {"type": "docs", "section": "Documentation", "hidden": true},
+        {"type": "chore", "section": "Chores", "hidden": true},
+        {"type": "ci", "section": "CI/CD", "hidden": true},
+        {"type": "test", "section": "Tests", "hidden": true}
+      ],
+      "extra-files": [
+        "README.md",
+        "action.yml"
+      ]
+    }
+  }
+}
+```
+
+**Key settings:**
+- `release-type: "go"`: Enables Go-specific versioning
+- `bump-minor-pre-major: true`: `feat` bumps minor before 1.0.0
+- `changelog-sections`: Controls what appears in changelog
+- `hidden: true`: Excludes from changelog (but still tracked)
+- `extra-files`: Auto-updates version markers in these files
+
+### .github/release-please-manifest.json
+
+Tracks the current version:
+
+```json
+{
+  ".": "0.19.4"
+}
+```
+
+release-please updates this on each release.
+
+### .goreleaser.yml
+
+Configures binary builds:
+
+```yaml
+builds:
+  - id: check-image
+    main: ./cmd/check-image
+    binary: check-image
+    ldflags:
+      - -s -w
+      - -X github.com/jarfernandez/check-image/internal/version.Version=v{{.Version}}
+      - -X github.com/jarfernandez/check-image/internal/version.Commit={{.ShortCommit}}
+      - -X github.com/jarfernandez/check-image/internal/version.BuildDate={{.Date}}
+    env:
+      - CGO_ENABLED=0
+    goos: [linux, darwin, windows]
+    goarch: [amd64, arm64]
+    ignore:
+      - goos: windows
+        goarch: arm64
+
+archives:
+  - formats: [tar.gz]
+    name_template: check-image_{{.Version}}_{{.Os}}_{{.Arch}}
+    format_overrides:
+      - goos: windows
+        formats: [zip]
+    files:
+      - LICENSE
+      - README.md
+      - CHANGELOG.md
+      - config/*
+
+brews:
+  - name: check-image
+    repository:
+      owner: jarfernandez
+      name: homebrew-tap
+      token: "{{ .Env.HOMEBREW_TAP_GITHUB_TOKEN }}"
+    directory: Formula
+    homepage: "https://github.com/jarfernandez/check-image"
+    description: "Validate container images against security standards"
+    skip_upload: auto
+```
+
+**Key features:**
+- Static binaries (CGO_ENABLED=0)
+- Stripped binaries (-s -w reduces size)
+- Version injection via ldflags
+- Multi-platform builds (5 platforms)
+- Archives include sample configs
+- Homebrew formula auto-published
+
+## GoReleaser Templates
+
+GoReleaser uses template variables:
+
+| Variable | Example | Description |
+|----------|---------|-------------|
+| `{{.Version}}` | `0.20.0` | Release version (without `v`) |
+| `{{.Tag}}` | `v0.20.0` | Git tag (with `v`) |
+| `{{.ShortCommit}}` | `a1b2c3d` | 7-character commit hash |
+| `{{.Commit}}` | `a1b2c3d4e5f6...` | Full commit hash |
+| `{{.Date}}` | `2026-03-04T12:34:56Z` | RFC3339 UTC timestamp |
+| `{{.Os}}` | `linux` | Target operating system |
+| `{{.Arch}}` | `amd64` | Target architecture |
+
+## Homebrew Distribution
+
+### Tap Setup
+
+**Repository:** `jarfernandez/homebrew-tap`  
+**Formula path:** `Formula/check-image.rb`  
+**Installation:**
+
+```bash
+brew tap jarfernandez/tap
+brew install check-image
+```
+
+### Authentication
+
+GoReleaser needs write access to the tap repository:
+
+1. Create a Fine-grained Personal Access Token
+2. Grant `Contents: read and write` permission on `homebrew-tap`
+3. Add as repository secret: `HOMEBREW_TAP_GITHUB_TOKEN`
+4. GoReleaser uses this token in the `brews` section
+
+<Warning>
+The default `GITHUB_TOKEN` cannot write to external repositories. You must use a separate PAT.
+</Warning>
+
+### Token Expiration
+
+GitHub sends email warnings before PAT expiration. Renew the token and update the repository secret to avoid release failures.
+
+## Docker Image Publishing
+
+### Image Tags
+
+Every release publishes images to `ghcr.io/jarfernandez/check-image` with multiple tags:
+
+```bash
+ghcr.io/jarfernandez/check-image:0.20.0  # Full version
+ghcr.io/jarfernandez/check-image:0.20    # Major.minor
+ghcr.io/jarfernandez/check-image:0       # Major only
+ghcr.io/jarfernandez/check-image:latest  # Latest release
+```
+
+### Multi-Arch Support
+
+Images are built for:
+- `linux/amd64`
+- `linux/arm64`
+
+Docker automatically pulls the correct architecture.
+
+### Security Validation
+
+Before publishing, the image is:
+
+1. **Scanned with Trivy** for CRITICAL/HIGH vulnerabilities
+2. **Validated with check-image** (dogfooding):
+   - Size < 20MB
+   - Runs as non-root
+   - No unauthorized ports
+   - No secrets detected
+
+Fails if any check fails.
+
+### Version Injection
+
+The Dockerfile accepts build args:
+
+```dockerfile
+ARG VERSION=dev
+ARG COMMIT=none
+ARG BUILD_DATE=unknown
+
+RUN go build \
+  -ldflags "-s -w \
+    -X github.com/jarfernandez/check-image/internal/version.Version=$VERSION \
+    -X github.com/jarfernandez/check-image/internal/version.Commit=$COMMIT \
+    -X github.com/jarfernandez/check-image/internal/version.BuildDate=$BUILD_DATE" \
+  -o check-image ./cmd/check-image
+```
+
+The release workflow passes these values:
+
+```yaml
+build-args: |
+  VERSION=${{ steps.version.outputs.version }}
+  COMMIT=${{ steps.version.outputs.commit }}
+  BUILD_DATE=${{ steps.version.outputs.build_date }}
+```
+
+## Troubleshooting
+
+### Release PR Not Created
+
+**Possible causes:**
+- No commits since last release that trigger version bumps
+- Only `docs:`, `chore:`, `ci:`, or `test:` commits
+- Commits don't follow Conventional Commits format
+
+**Solution:**
+Merge at least one `feat:`, `fix:`, `perf:`, or `refactor:` commit.
+
+### Release PR Stuck
+
+**Symptom:** New release PR not created after merging previous one.
+
+**Cause:** Previous release PR has label `autorelease: pending` but was never released.
+
+**Solution:**
+1. Find the stuck PR
+2. Change label from `autorelease: pending` to `autorelease: tagged`
+3. release-please will create a new Release PR
+
+### GoReleaser Fails
+
+**Check:**
+- Tests pass: `go test ./...`
+- Modules are tidy: `go mod tidy`
+- Homebrew token is valid (check expiration)
+
+### Docker Build Fails
+
+**Check:**
+- Dockerfile lints: `hadolint Dockerfile`
+- Image builds locally:
+  ```bash
+  docker build --build-arg VERSION=test -t check-image .
+  ```
+- Trivy scan passes:
+  ```bash
+  docker run --rm aquasec/trivy image check-image:test
+  ```
+
+## Manual Release (Emergency)
+
+If automation fails, you can release manually:
+
+```bash
+# 1. Create and push tag
+git tag v0.20.0
+git push origin v0.20.0
+
+# 2. Run GoReleaser locally
+export GITHUB_TOKEN=<your-token>
+export HOMEBREW_TAP_GITHUB_TOKEN=<your-homebrew-token>
+goreleaser release --clean
+
+# 3. Build and push Docker image
+docker buildx build \
+  --platform linux/amd64,linux/arm64 \
+  --build-arg VERSION=0.20.0 \
+  --build-arg COMMIT=$(git rev-parse --short HEAD) \
+  --build-arg BUILD_DATE=$(date -u +%Y-%m-%dT%H:%M:%SZ) \
+  -t ghcr.io/jarfernandez/check-image:0.20.0 \
+  -t ghcr.io/jarfernandez/check-image:latest \
+  --push .
+```
+
+<Warning>
+Manual releases bypass security checks and validations. Use only in emergencies.
+</Warning>
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="CI/CD" icon="rocket" href="/development/ci-cd">
+    Learn about continuous integration pipelines
+  </Card>
+  
+  <Card title="Contributing" icon="code-pull-request" href="/development/overview">
+    Back to contributing overview
+  </Card>
+</CardGroup>

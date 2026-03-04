@@ -1,0 +1,362 @@
+---
+title: all
+description: Run all validation checks on a container image
+---
+
+## Description
+
+Runs all validation checks on a container image at once. By default, runs all 10 checks (age, size, ports, registry, root-user, secrets, healthcheck, labels, entrypoint, platform) with default parameters.
+
+## Command Syntax
+
+```bash
+check-image all <image> [flags]
+```
+
+## Flags
+
+### Check Selection
+
+| Flag | Short | Type | Description |
+|------|-------|------|-------------|
+| `--config` | `-c` | string | Configuration file (JSON or YAML) (optional) |
+| `--include` | - | string | Comma-separated list of checks to run (optional) |
+| `--skip` | - | string | Comma-separated list of checks to skip (optional) |
+| `--fail-fast` | - | bool | Stop on first check failure (default: `false`) |
+
+**Note:** `--include` and `--skip` are mutually exclusive.
+
+### Check-Specific Flags
+
+| Flag | Short | Type | Default | Description |
+|------|-------|------|---------|-------------|
+| `--max-age` | `-a` | uint | `90` | Maximum age in days (optional) |
+| `--max-size` | `-m` | uint | `500` | Maximum size in megabytes (optional) |
+| `--max-layers` | `-y` | uint | `20` | Maximum number of layers (optional) |
+| `--allowed-ports` | `-p` | string | - | Comma-separated list of allowed ports or `@<file>` (optional) |
+| `--allowed-platforms` | - | string | - | Comma-separated list of allowed platforms or `@<file>` |
+| `--registry-policy` | `-r` | string | - | Registry policy file (JSON or YAML) |
+| `--labels-policy` | - | string | - | Labels policy file (JSON or YAML) |
+| `--secrets-policy` | `-s` | string | - | Secrets policy file (JSON or YAML) (optional) |
+| `--skip-env-vars` | - | bool | `false` | Skip environment variable checks in secrets detection (optional) |
+| `--skip-files` | - | bool | `false` | Skip file system checks in secrets detection (optional) |
+| `--allow-shell-form` | - | bool | `false` | Allow shell form for entrypoint or cmd (optional) |
+
+### Global Flags
+
+| Flag | Short | Type | Default | Description |
+|------|-------|------|---------|-------------|
+| `--output` | `-o` | string | `text` | Output format: `text` or `json` |
+| `--log-level` | - | string | `info` | Log level (trace, debug, info, warn, error, fatal, panic) |
+
+## Precedence Rules
+
+1. **Without `--config`**: all 10 checks run with defaults, except those in `--skip`
+2. **With `--config`**: only checks present in the config file run, except those in `--skip`
+3. **`--include` overrides** config file check selection (runs only specified checks)
+4. **CLI flags override** config file values
+5. **`--include` and `--skip`** always take precedence over the config file
+
+## Check Names
+
+Valid check names for `--include` and `--skip`:
+- `age`
+- `size`
+- `ports`
+- `registry`
+- `root-user`
+- `secrets`
+- `healthcheck`
+- `labels`
+- `entrypoint`
+- `platform`
+
+## Required Configuration
+
+Some checks require additional configuration:
+
+| Check | Required Flag | Can Be Provided Via |
+|-------|---------------|--------------------|
+| `registry` | `--registry-policy` | CLI flag or config file |
+| `labels` | `--labels-policy` | CLI flag or config file |
+| `platform` | `--allowed-platforms` | CLI flag or config file |
+
+If these checks are enabled but not configured, they fail with an execution error.
+
+## Usage Examples
+
+### Run All Checks with Defaults
+
+```bash
+check-image all nginx:latest
+```
+
+**Note:** Checks requiring configuration (registry, labels, platform) will fail unless their flags are provided.
+
+### Include Only Specific Checks
+
+```bash
+check-image all nginx:latest --include age,size,root-user --max-age 30 --max-size 200
+```
+
+### Skip Specific Checks
+
+```bash
+check-image all nginx:latest --skip registry,secrets,labels,platform
+```
+
+### With Config File
+
+```bash
+check-image all nginx:latest --config config/config.yaml
+```
+
+### Config File with CLI Overrides
+
+```bash
+check-image all nginx:latest -c config/config.yaml --max-age 20 --skip secrets
+```
+
+### With Fail-Fast
+
+```bash
+check-image all nginx:latest --fail-fast --skip registry --config config/config.yaml
+```
+
+### Config from stdin
+
+```bash
+cat config/config.json | check-image all nginx:latest --config -
+```
+
+### JSON Output
+
+```bash
+check-image all nginx:latest --skip registry,labels,platform --output json
+```
+
+### OCI Layout
+
+```bash
+check-image all oci:/path/to/layout:1.0 --include age,size,root-user,ports,healthcheck
+```
+
+### OCI Archive
+
+```bash
+check-image all oci-archive:/path/to/image.tar:latest --skip ports,registry,secrets,labels,platform
+```
+
+## Example Output
+
+### Text Format (Multiple Checks)
+
+```
+Running 6 checks on image nginx:latest
+
+age
+✓ Image is less than 90 days old
+Created: 2026-02-20T12:34:56Z
+Age: 12 days
+
+size
+✓ Image size is within limits
+Size: 142 MB (limit: 500 MB)
+Layers: 7 (limit: 20)
+
+ports
+✓ All exposed ports are in the allowed list
+Exposed Ports: 80, 443
+
+root-user
+✗ Image runs as root user
+User: root
+
+healthcheck
+✓ Image has a healthcheck defined
+
+secrets
+✓ No secrets detected
+```
+
+### JSON Format (All Checks)
+
+```json
+{
+  "image": "nginx:latest",
+  "passed": false,
+  "checks": [
+    {
+      "check": "age",
+      "image": "nginx:latest",
+      "passed": true,
+      "message": "Image is less than 90 days old",
+      "details": {
+        "created-at": "2026-02-20T12:34:56Z",
+        "age-days": 12.5,
+        "max-age": 90
+      }
+    },
+    {
+      "check": "size",
+      "image": "nginx:latest",
+      "passed": true,
+      "message": "Image size is within limits",
+      "details": {
+        "size-mb": 142,
+        "max-size": 500,
+        "layers": 7,
+        "max-layers": 20
+      }
+    },
+    {
+      "check": "root-user",
+      "image": "nginx:latest",
+      "passed": false,
+      "message": "Image runs as root user",
+      "details": {
+        "user": "root"
+      }
+    }
+  ],
+  "summary": {
+    "total": 8,
+    "passed": 6,
+    "failed": 2,
+    "errored": 0,
+    "skipped": ["registry", "labels"]
+  }
+}
+```
+
+## Configuration File Format
+
+### YAML Example
+
+```yaml
+checks:
+  age:
+    max-age: 90
+  size:
+    max-size: 500
+    max-layers: 20
+  ports:
+    allowed-ports: "@config/allowed-ports.yaml"
+  registry:
+    registry-policy: config/registry-policy.yaml
+  root-user: {}
+  secrets:
+    secrets-policy: config/secrets-policy.yaml
+    skip-env-vars: false
+    skip-files: false
+  labels:
+    labels-policy: config/labels-policy.yaml
+  healthcheck: {}
+  entrypoint: {}
+  platform:
+    allowed-platforms: "@config/allowed-platforms.yaml"
+```
+
+### JSON Example
+
+```json
+{
+  "checks": {
+    "age": {
+      "max-age": 90
+    },
+    "size": {
+      "max-size": 500,
+      "max-layers": 20
+    },
+    "ports": {
+      "allowed-ports": "@config/allowed-ports.json"
+    },
+    "registry": {
+      "registry-policy": "config/registry-policy.json"
+    },
+    "root-user": {},
+    "secrets": {
+      "secrets-policy": "config/secrets-policy.json"
+    },
+    "labels": {
+      "labels-policy": "config/labels-policy.json"
+    },
+    "healthcheck": {},
+    "entrypoint": {},
+    "platform": {
+      "allowed-platforms": "@config/allowed-platforms.json"
+    }
+  }
+}
+```
+
+### Inline Policy Example
+
+Policies can be embedded directly in the config file:
+
+```yaml
+checks:
+  registry:
+    registry-policy:
+      trusted-registries:
+        - docker.io
+        - ghcr.io
+        - gcr.io
+  secrets:
+    secrets-policy:
+      check-env-vars: true
+      check-files: false
+      excluded-paths:
+        - /usr/share/**
+  labels:
+    labels-policy:
+      required-labels:
+        - name: maintainer
+        - name: org.opencontainers.image.version
+          pattern: "^v?\\d+\\.\\d+\\.\\d+$"
+  ports:
+    allowed-ports: [80, 443, 8080]
+  platform:
+    allowed-platforms: [linux/amd64, linux/arm64]
+```
+
+## Fail-Fast Behavior
+
+By default, the `all` command runs all checks and reports all failures (continue-on-error mode).
+
+With `--fail-fast`:
+- Execution stops on the first check that fails (validation failure or execution error)
+- Remaining checks are not executed
+- The exit code reflects the first failure encountered
+
+```bash
+check-image all nginx:latest --fail-fast --config config.yaml
+```
+
+## Exit Codes
+
+| Exit Code | Meaning | Example |
+|-----------|---------|---------|----------|
+| 0 | All checks passed | All validations succeeded |
+| 1 | One or more checks failed | Image too old, runs as root, etc. |
+| 2 | Execution error | Invalid config file, image not found, missing required flags |
+
+**Note:** If some checks fail validation and others have execution errors, exit code 2 (execution error) takes precedence over exit code 1 (validation failure).
+
+## Related Configuration Files
+
+- `config/config.yaml` - Sample all-checks configuration in YAML format
+- `config/config.json` - Sample all-checks configuration in JSON format
+- `config/config-inline.yaml` - Sample with inline policies in YAML format
+- `config/config-inline.json` - Sample with inline policies in JSON format
+
+## Notes
+
+- Only checks present in the config file are executed (when using `--config`).
+- Empty check objects (e.g., `root-user: {}`) enable the check with defaults.
+- CLI flags always override config file values.
+- `--include` and `--skip` override config file check selection.
+- Policy files support both file paths (strings) and inline objects.
+- Inline objects are converted to temporary JSON files internally.
+- All file arguments support stdin input using `-`.

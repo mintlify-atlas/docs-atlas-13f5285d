@@ -1,0 +1,620 @@
+---
+title: Configuration Files
+description: Understand policy and configuration file formats for Check Image validation
+---
+
+Check Image uses configuration files to define validation policies and parameters. All configuration files support both JSON and YAML formats, and can be read from disk or standard input.
+
+## File Format Support
+
+Check Image automatically detects file format based on file extension:
+
+<CardGroup cols={2}>
+  <Card title="JSON" icon="brackets-curly">
+    Files with `.json` extension
+  </Card>
+  <Card title="YAML" icon="file-code">
+    Files with `.yaml` or `.yml` extension
+  </Card>
+</CardGroup>
+
+<Info>
+  When reading from stdin with `-`, format is auto-detected by content: JSON starts with `{` or `[`, otherwise treated as YAML.
+</Info>
+
+## Configuration File Types
+
+Check Image uses different configuration files for different purposes:
+
+### Registry Policy Files
+
+Define which container registries are trusted or blocked.
+
+<Tabs>
+  <Tab title="JSON">
+    ```json config/registry-policy.json
+    {
+      "trusted-registries": [
+        "index.docker.io",
+        "ghcr.io",
+        "gcr.io",
+        "quay.io",
+        "public.ecr.aws",
+        "mcr.microsoft.com",
+        "registry.redhat.io",
+        "registry.gitlab.com"
+      ]
+    }
+    ```
+  </Tab>
+  
+  <Tab title="YAML">
+    ```yaml config/registry-policy.yaml
+    trusted-registries:
+      - index.docker.io
+      - ghcr.io
+      - gcr.io
+      - quay.io
+      - public.ecr.aws
+      - mcr.microsoft.com
+      - registry.redhat.io
+      - registry.gitlab.com
+    ```
+  </Tab>
+</Tabs>
+
+<ParamField path="trusted-registries" type="array">
+  Allowlist of trusted registries. Only images from these registries are allowed. Mutually exclusive with `excluded-registries`.
+</ParamField>
+
+<ParamField path="excluded-registries" type="array">
+  Blocklist of excluded registries. All registries except these are allowed. Mutually exclusive with `trusted-registries`.
+</ParamField>
+
+<CodeGroup>
+```bash Usage
+check-image registry nginx:latest --registry-policy config/registry-policy.json
+check-image registry ghcr.io/myorg/app:latest --registry-policy config/registry-policy.yaml
+```
+
+```bash Blocklist mode
+cat << 'EOF' > blocked-registries.yaml
+excluded-registries:
+  - suspicious-registry.com
+  - untrusted.io
+EOF
+
+check-image registry nginx:latest --registry-policy blocked-registries.yaml
+```
+</CodeGroup>
+
+### Secrets Policy Files
+
+Control secrets detection behavior and define exclusions for known safe patterns.
+
+<Tabs>
+  <Tab title="JSON">
+    ```json config/secrets-policy.json
+    {
+      "check-env-vars": true,
+      "check-files": true,
+      "excluded-paths": [
+        "/usr/share/doc/**",
+        "/usr/share/examples/**",
+        "/usr/share/man/**"
+      ],
+      "excluded-env-vars": [
+        "PUBLIC_KEY",
+        "SSH_PUBLIC_KEY"
+      ],
+      "custom-env-patterns": [],
+      "custom-file-patterns": []
+    }
+    ```
+  </Tab>
+  
+  <Tab title="YAML">
+    ```yaml config/secrets-policy.yaml
+    check-env-vars: true
+    check-files: true
+    excluded-paths:
+      - /usr/share/doc/**
+      - /usr/share/examples/**
+      - /usr/share/man/**
+    excluded-env-vars:
+      - PUBLIC_KEY
+      - SSH_PUBLIC_KEY
+    custom-env-patterns: []
+    custom-file-patterns: []
+    ```
+  </Tab>
+</Tabs>
+
+<ParamField path="check-env-vars" type="boolean" default="true">
+  Enable environment variable scanning for sensitive patterns.
+</ParamField>
+
+<ParamField path="check-files" type="boolean" default="true">
+  Enable file system scanning across all image layers.
+</ParamField>
+
+<ParamField path="excluded-paths" type="array">
+  File paths to exclude from scanning. Supports glob patterns with `**` for recursive matching.
+</ParamField>
+
+<ParamField path="excluded-env-vars" type="array">
+  Environment variable names to exclude from scanning (case-sensitive).
+</ParamField>
+
+<ParamField path="custom-env-patterns" type="array">
+  Additional environment variable patterns to detect (case-insensitive regex).
+</ParamField>
+
+<ParamField path="custom-file-patterns" type="array">
+  Additional file path patterns to detect (regex).
+</ParamField>
+
+<CodeGroup>
+```bash Usage
+check-image secrets nginx:latest --secrets-policy config/secrets-policy.json
+check-image secrets nginx:latest --secrets-policy config/secrets-policy.yaml
+```
+
+```bash With flags override
+check-image secrets nginx:latest \
+  --secrets-policy config/secrets-policy.json \
+  --skip-env-vars
+```
+</CodeGroup>
+
+<Note>
+  The secrets check works out-of-the-box with sensible defaults when no policy file is provided.
+</Note>
+
+### Labels Policy Files
+
+Define required OCI annotations (labels) and their validation rules.
+
+<Tabs>
+  <Tab title="JSON">
+    ```json config/labels-policy.json
+    {
+      "required-labels": [
+        {
+          "name": "maintainer"
+        },
+        {
+          "name": "org.opencontainers.image.version",
+          "pattern": "^v?\\d+\\.\\d+\\.\\d+(-[a-zA-Z0-9.]+)?(\\+[a-zA-Z0-9.]+)?$"
+        },
+        {
+          "name": "org.opencontainers.image.vendor",
+          "value": "MyCompany"
+        },
+        {
+          "name": "org.opencontainers.image.source"
+        },
+        {
+          "name": "org.opencontainers.image.created",
+          "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}Z$"
+        }
+      ]
+    }
+    ```
+  </Tab>
+  
+  <Tab title="YAML">
+    ```yaml config/labels-policy.yaml
+    required-labels:
+      - name: maintainer
+      - name: org.opencontainers.image.version
+        pattern: ^v?\d+\.\d+\.\d+(-[a-zA-Z0-9.]+)?(\+[a-zA-Z0-9.]+)?$
+      - name: org.opencontainers.image.vendor
+        value: MyCompany
+      - name: org.opencontainers.image.source
+      - name: org.opencontainers.image.created
+        pattern: ^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z$
+    ```
+  </Tab>
+</Tabs>
+
+<ParamField path="required-labels" type="array">
+  Array of label validation rules. Each rule has a `name` and optional `value` or `pattern`.
+</ParamField>
+
+<ParamField path="required-labels[].name" type="string" required>
+  Label name (OCI annotation key).
+</ParamField>
+
+<ParamField path="required-labels[].value" type="string">
+  Exact value the label must have. Mutually exclusive with `pattern`.
+</ParamField>
+
+<ParamField path="required-labels[].pattern" type="string">
+  Regular expression the label value must match. Mutually exclusive with `value`.
+</ParamField>
+
+<Info>
+  **Validation modes**:
+  - **Existence check**: Only `name` specified (label must be present)
+  - **Exact match**: `name` and `value` specified (label value must exactly match)
+  - **Pattern match**: `name` and `pattern` specified (label value must match regex)
+</Info>
+
+```bash Usage
+check-image labels nginx:latest --labels-policy config/labels-policy.json
+check-image labels ghcr.io/myorg/app:v1.0 --labels-policy config/labels-policy.yaml
+```
+
+### Ports Policy Files
+
+Define allowed exposed ports.
+
+<Tabs>
+  <Tab title="JSON">
+    ```json config/allowed-ports.json
+    {
+      "allowed-ports": [
+        80,
+        443
+      ]
+    }
+    ```
+  </Tab>
+  
+  <Tab title="YAML">
+    ```yaml config/allowed-ports.yaml
+    allowed-ports:
+      - 80
+      - 443
+    ```
+  </Tab>
+</Tabs>
+
+<ParamField path="allowed-ports" type="array">
+  Array of allowed port numbers (integers).
+</ParamField>
+
+<CodeGroup>
+```bash With file
+check-image ports nginx:latest --allowed-ports @config/allowed-ports.json
+check-image ports nginx:latest --allowed-ports @config/allowed-ports.yaml
+```
+
+```bash Inline (no file)
+check-image ports nginx:latest --allowed-ports 80,443,8080
+```
+</CodeGroup>
+
+<Note>
+  The `@` prefix indicates a file path. Without it, the argument is treated as a comma-separated list.
+</Note>
+
+### Platforms Policy Files
+
+Define allowed OS/architecture combinations.
+
+<Tabs>
+  <Tab title="JSON">
+    ```json config/allowed-platforms.json
+    {
+      "allowed-platforms": [
+        "linux/amd64",
+        "linux/arm64",
+        "linux/arm/v7"
+      ]
+    }
+    ```
+  </Tab>
+  
+  <Tab title="YAML">
+    ```yaml config/allowed-platforms.yaml
+    allowed-platforms:
+      - linux/amd64
+      - linux/arm64
+      - linux/arm/v7
+    ```
+  </Tab>
+</Tabs>
+
+<ParamField path="allowed-platforms" type="array">
+  Array of allowed platform strings in `OS/Architecture` or `OS/Architecture/Variant` format.
+</ParamField>
+
+<CodeGroup>
+```bash With file
+check-image platform nginx:latest --allowed-platforms @config/allowed-platforms.json
+check-image platform nginx:latest --allowed-platforms @config/allowed-platforms.yaml
+```
+
+```bash Inline (no file)
+check-image platform nginx:latest --allowed-platforms linux/amd64,linux/arm64
+```
+</CodeGroup>
+
+### All Checks Configuration Files
+
+Define which checks to run and their parameters for the `all` command.
+
+<Tabs>
+  <Tab title="JSON">
+    ```json config/config.json
+    {
+      "checks": {
+        "age": {
+          "max-age": 90
+        },
+        "size": {
+          "max-size": 500,
+          "max-layers": 20
+        },
+        "ports": {
+          "allowed-ports": "@config/allowed-ports.json"
+        },
+        "registry": {
+          "registry-policy": "config/registry-policy.json"
+        },
+        "root-user": {},
+        "secrets": {
+          "secrets-policy": "config/secrets-policy.json",
+          "skip-env-vars": false,
+          "skip-files": false
+        },
+        "labels": {
+          "labels-policy": "config/labels-policy.json"
+        },
+        "healthcheck": {},
+        "entrypoint": {},
+        "platform": {
+          "allowed-platforms": "@config/allowed-platforms.json"
+        }
+      }
+    }
+    ```
+  </Tab>
+  
+  <Tab title="YAML">
+    ```yaml config/config.yaml
+    checks:
+      age:
+        max-age: 90
+      size:
+        max-size: 500
+        max-layers: 20
+      ports:
+        allowed-ports: "@config/allowed-ports.json"
+      registry:
+        registry-policy: config/registry-policy.json
+      root-user: {}
+      secrets:
+        secrets-policy: config/secrets-policy.json
+        skip-env-vars: false
+        skip-files: false
+      labels:
+        labels-policy: config/labels-policy.json
+      healthcheck: {}
+      entrypoint: {}
+      platform:
+        allowed-platforms: "@config/allowed-platforms.json"
+    ```
+  </Tab>
+</Tabs>
+
+<ParamField path="checks" type="object">
+  Map of check names to their configuration. Only checks present in this object are executed.
+</ParamField>
+
+```bash Usage
+check-image all nginx:latest --config config/config.json
+check-image all nginx:latest --config config/config.yaml
+```
+
+<Info>
+  **Precedence rules**:
+  1. Without `--config`: all 10 checks run with defaults
+  2. With `--config`: only checks present in config file run
+  3. `--include` overrides config file check selection
+  4. `--skip` removes checks from any selection
+  5. CLI flags override config file values
+</Info>
+
+## Inline Configuration
+
+The `all` command config file supports embedding policies directly as objects instead of file paths.
+
+<Tabs>
+  <Tab title="JSON">
+    ```json config/config-inline.json
+    {
+      "checks": {
+        "registry": {
+          "registry-policy": {
+            "trusted-registries": ["docker.io", "ghcr.io"]
+          }
+        },
+        "labels": {
+          "labels-policy": {
+            "required-labels": [
+              {"name": "maintainer"},
+              {"name": "org.opencontainers.image.version", "pattern": "^v?\\d+\\.\\d+\\.\\d+$"}
+            ]
+          }
+        },
+        "secrets": {
+          "secrets-policy": {
+            "check-env-vars": true,
+            "check-files": false,
+            "excluded-paths": ["/usr/share/**"]
+          }
+        },
+        "ports": {
+          "allowed-ports": [80, 443]
+        }
+      }
+    }
+    ```
+  </Tab>
+  
+  <Tab title="YAML">
+    ```yaml config/config-inline.yaml
+    checks:
+      registry:
+        registry-policy:
+          trusted-registries:
+            - docker.io
+            - ghcr.io
+      labels:
+        labels-policy:
+          required-labels:
+            - name: maintainer
+            - name: org.opencontainers.image.version
+              pattern: ^v?\d+\.\d+\.\d+$
+      secrets:
+        secrets-policy:
+          check-env-vars: true
+          check-files: false
+          excluded-paths:
+            - /usr/share/**
+      ports:
+        allowed-ports:
+          - 80
+          - 443
+    ```
+  </Tab>
+</Tabs>
+
+<CardGroup cols={2}>
+  <Card title="Benefits" icon="check">
+    - Single file contains all configuration
+    - Easier version control
+    - Simpler deployment
+    - Mix inline and file references
+  </Card>
+  
+  <Card title="Use Cases" icon="lightbulb">
+    - CI/CD pipelines
+    - Docker builds
+    - Kubernetes deployments
+    - Portable validation configs
+  </Card>
+</CardGroup>
+
+```bash Usage
+check-image all nginx:latest --config config/config-inline.yaml
+check-image all nginx:latest --config config/config-inline.json --max-age 30
+```
+
+## Reading from Standard Input
+
+All file arguments support reading from stdin using `-` as the path.
+
+<CodeGroup>
+```bash Registry policy from stdin
+echo '{"trusted-registries": ["docker.io", "ghcr.io"]}' | \
+  check-image registry nginx:latest --registry-policy -
+```
+
+```bash Secrets policy from stdin
+cat secrets-policy.yaml | \
+  check-image secrets nginx:latest --secrets-policy -
+```
+
+```bash Ports from stdin
+echo '{"allowed-ports": [80, 443]}' | \
+  check-image ports nginx:latest --allowed-ports @-
+```
+
+```bash All command config from stdin
+cat config.json | \
+  check-image all nginx:latest --config -
+```
+</CodeGroup>
+
+<Warning>
+  **Size limit**: Stdin input is limited to 10MB to prevent memory exhaustion.
+</Warning>
+
+<Warning>
+  **Stdin conflict**: `--config -`, `--allowed-ports @-`, and other stdin-reading flags cannot be combined with `--password-stdin`.
+</Warning>
+
+### Dynamic Configuration from Pipelines
+
+<CodeGroup>
+```bash Generate config dynamically
+jq -n '{"trusted-registries": ["docker.io"]}' | \
+  check-image registry nginx:latest --registry-policy -
+```
+
+```bash Environment-based configuration
+envsubst < config-template.yaml | \
+  check-image all nginx:latest --config -
+```
+
+```bash Conditional policies
+if [ "$ENV" = "prod" ]; then
+  cat prod-policy.json
+else
+  cat dev-policy.json
+fi | check-image all nginx:latest --config -
+```
+</CodeGroup>
+
+## File Locations
+
+Check Image looks for configuration files in the following locations:
+
+<Steps>
+  <Step title="Explicit paths">
+    Absolute or relative paths specified in flags (e.g., `--registry-policy /etc/check-image/registry.json`).
+  </Step>
+  
+  <Step title="Current directory">
+    Files in the current working directory (e.g., `--registry-policy registry-policy.json`).
+  </Step>
+  
+  <Step title="Relative paths">
+    Paths relative to the current directory (e.g., `--registry-policy config/registry-policy.json`).
+  </Step>
+</Steps>
+
+<Tip>
+  Use relative paths in scripts and CI/CD pipelines for portability.
+</Tip>
+
+## Best Practices
+
+<CardGroup cols={2}>
+  <Card title="Version control policies" icon="code-branch">
+    Store policy files in your repository alongside your Dockerfile for versioned, traceable validation rules.
+  </Card>
+  
+  <Card title="Use YAML for readability" icon="file-lines">
+    YAML is more human-readable and easier to maintain than JSON for complex policies.
+  </Card>
+  
+  <Card title="Validate policies" icon="check-circle">
+    Test policy files with simple images before using them in production pipelines.
+  </Card>
+  
+  <Card title="Document custom patterns" icon="book">
+    Add comments (in YAML) or a separate README explaining custom patterns and exclusions.
+  </Card>
+</CardGroup>
+
+## Related Topics
+
+<CardGroup cols={2}>
+  <Card title="Image Reference Syntax" icon="image" href="/usage/image-reference-syntax">
+    Learn about transport prefixes and image references
+  </Card>
+  <Card title="Authentication" icon="key" href="/usage/authentication">
+    Configure credentials for private registries
+  </Card>
+  <Card title="Output Formats" icon="terminal" href="/usage/output-formats">
+    Control output format and color modes
+  </Card>
+  <Card title="All Command" icon="list-check" href="/commands/all">
+    Run multiple checks with a single configuration file
+  </Card>
+</CardGroup>

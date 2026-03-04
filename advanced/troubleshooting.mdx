@@ -1,0 +1,731 @@
+---
+title: Troubleshooting
+description: Common issues and solutions for Check Image validation
+---
+
+## Authentication Issues
+
+### Private Registry Authentication Failure
+
+**Symptom:**
+```
+Error: failed to fetch image: UNAUTHORIZED: authentication required
+Exit code: 2
+```
+
+**Causes:**
+- Missing credentials
+- Expired authentication token
+- Incorrect username or password
+- Docker config not readable
+
+**Solutions:**
+
+**1. Use CLI flags:**
+```bash
+check-image age myregistry.example.com/app:latest \
+  --username myuser \
+  --password mytoken
+```
+
+**2. Use environment variables (recommended for CI/CD):**
+```bash
+export CHECK_IMAGE_USERNAME=myuser
+export CHECK_IMAGE_PASSWORD=mytoken
+check-image age myregistry.example.com/app:latest
+```
+
+**3. Use `--password-stdin` (most secure):**
+```bash
+echo "$TOKEN" | check-image age myregistry.example.com/app:latest \
+  --username myuser \
+  --password-stdin
+```
+
+**4. Use Docker credential helpers:**
+```bash
+# Login with Docker first
+docker login myregistry.example.com
+
+# Then run check-image (uses ~/.docker/config.json)
+check-image age myregistry.example.com/app:latest
+```
+
+**5. For GitHub Container Registry (ghcr.io):**
+```bash
+# With Personal Access Token (PAT)
+echo "$GITHUB_TOKEN" | check-image age ghcr.io/myorg/app:latest \
+  --username myusername \
+  --password-stdin
+
+# Or with environment variables
+export CHECK_IMAGE_USERNAME=myusername
+export CHECK_IMAGE_PASSWORD=$GITHUB_TOKEN
+check-image age ghcr.io/myorg/app:latest
+```
+
+### Credential Precedence Issues
+
+**Symptom:**
+Authentication works with Docker CLI but fails with check-image.
+
+**Solution:**
+
+Check Image uses the following credential precedence (highest first):
+
+1. CLI flags (`--username` / `--password` / `--password-stdin`)
+2. Environment variables (`CHECK_IMAGE_USERNAME` / `CHECK_IMAGE_PASSWORD`)
+3. Docker config (`~/.docker/config.json` and credential helpers)
+
+If explicit credentials are provided but wrong, Docker config will **not** be used as fallback.
+
+### Username Without Password
+
+**Symptom:**
+```
+Error: --username requires --password or --password-stdin
+Exit code: 2
+```
+
+**Solution:**
+
+Both username and password must be provided together:
+
+```bash
+# ✗ Wrong
+check-image age private:latest --username myuser
+
+# ✓ Correct
+check-image age private:latest --username myuser --password mytoken
+```
+
+## Image Not Found Errors
+
+### Image Does Not Exist
+
+**Symptom:**
+```
+Error: failed to fetch image: not found
+Exit code: 2
+```
+
+**Causes:**
+- Typo in image name or tag
+- Image not pushed to registry
+- Image only exists locally (not in registry)
+- Wrong registry host
+
+**Solutions:**
+
+**1. Verify image name and tag:**
+```bash
+# Check image exists in registry
+docker pull nginx:latest
+
+# Then run check-image
+check-image age nginx:latest
+```
+
+**2. Use fully-qualified image reference:**
+```bash
+# ✗ Ambiguous
+check-image age nginx
+
+# ✓ Explicit registry and tag
+check-image age docker.io/library/nginx:latest
+```
+
+**3. For local-only images, ensure Docker daemon access:**
+```bash
+# Build image locally
+docker build -t myapp:dev .
+
+# Check-image will use local daemon if image not in registry
+check-image age myapp:dev
+```
+
+### Tag Missing (Defaults to `latest`)
+
+**Symptom:**
+```
+Error: failed to fetch image: manifest unknown
+```
+
+**Solution:**
+
+Always specify the tag explicitly:
+
+```bash
+# ✗ Defaults to :latest (may not exist)
+check-image age myapp
+
+# ✓ Explicit tag
+check-image age myapp:1.0.0
+```
+
+### Manifest Unknown
+
+**Symptom:**
+```
+Error: failed to fetch image: manifest unknown: manifest unknown
+Exit code: 2
+```
+
+**Causes:**
+- Image deleted from registry
+- Incorrect tag
+- Multi-architecture image without platform selection
+
+**Solutions:**
+
+**1. Verify tag exists:**
+```bash
+# List available tags
+docker search myregistry.example.com/myapp
+
+# Or use registry API
+curl -s https://myregistry.example.com/v2/myapp/tags/list
+```
+
+**2. For multi-arch images:**
+```bash
+# Check platform
+check-image platform nginx:latest --allowed-platforms "linux/amd64"
+```
+
+## Policy File Format Errors
+
+### Invalid JSON Syntax
+
+**Symptom:**
+```
+Error: error reading registry policy: invalid character '}' after object key
+Exit code: 2
+```
+
+**Solution:**
+
+Validate JSON syntax:
+
+```bash
+# Validate with jq
+jq empty config/registry-policy.json
+
+# Or with Python
+python3 -m json.tool config/registry-policy.json
+```
+
+**Common mistakes:**
+- Trailing commas in JSON
+- Missing quotes around keys
+- Mismatched brackets
+
+### Invalid YAML Syntax
+
+**Symptom:**
+```
+Error: error reading secrets policy: yaml: line 5: did not find expected key
+Exit code: 2
+```
+
+**Solution:**
+
+Validate YAML syntax:
+
+```bash
+# Validate with yamllint
+yamllint config/secrets-policy.yaml
+
+# Or with Python
+python3 -c "import yaml; yaml.safe_load(open('config/secrets-policy.yaml'))"
+```
+
+**Common mistakes:**
+- Inconsistent indentation
+- Tabs instead of spaces
+- Missing colons
+
+### Policy Validation Errors
+
+**Symptom:**
+```
+Error: policy must specify either trusted-registries or excluded-registries
+Exit code: 2
+```
+
+**Solution:**
+
+Ensure policy structure is correct:
+
+```yaml
+# ✗ Wrong - missing required field
+{}
+
+# ✓ Correct - has trusted-registries
+trusted-registries:
+  - docker.io
+  - ghcr.io
+```
+
+### Both Allowlist and Blocklist Specified
+
+**Symptom:**
+```
+Error: policy must specify either trusted-registries or excluded-registries, not both
+Exit code: 2
+```
+
+**Solution:**
+
+Use only one mode:
+
+```yaml
+# ✗ Wrong - both modes specified
+trusted-registries:
+  - docker.io
+excluded-registries:
+  - bad-registry.local
+
+# ✓ Correct - only allowlist
+trusted-registries:
+  - docker.io
+  - ghcr.io
+
+# ✓ Correct - only blocklist
+excluded-registries:
+  - bad-registry.local
+```
+
+### Invalid Regular Expression
+
+**Symptom:**
+```
+Error: invalid pattern for label 'version': error parsing regexp: missing closing ]
+Exit code: 2
+```
+
+**Solution:**
+
+Test regex patterns separately:
+
+```bash
+# Test with Go regexp (check-image uses Go's regexp package)
+go run -e 'package main; import ("fmt"; "regexp"); func main() { 
+  _, err := regexp.Compile("^v?\\d+\\.\\d+\\.\\d+$"); 
+  fmt.Println(err) 
+}'
+```
+
+**Common mistakes:**
+- Unescaped backslashes in JSON (use `\\d` not `\d`)
+- Incorrect character class syntax
+- Mismatched brackets or parentheses
+
+## Network and Registry Connectivity
+
+### Network Timeout
+
+**Symptom:**
+```
+Error: failed to fetch image: context deadline exceeded
+Exit code: 2
+```
+
+**Causes:**
+- Slow network connection
+- Registry server overloaded
+- Firewall blocking access
+- Proxy misconfiguration
+
+**Solutions:**
+
+**1. Verify network connectivity:**
+```bash
+# Test registry connectivity
+curl -v https://registry-1.docker.io/v2/
+
+# Check DNS resolution
+nslookup registry-1.docker.io
+```
+
+**2. Configure HTTP proxy:**
+```bash
+export HTTP_PROXY=http://proxy.example.com:8080
+export HTTPS_PROXY=http://proxy.example.com:8080
+check-image age nginx:latest
+```
+
+**3. Use Docker daemon (which may have proxy configured):**
+```bash
+# Pull image through daemon
+docker pull nginx:latest
+
+# Then validate (uses local daemon)
+check-image age nginx:latest
+```
+
+### TLS Certificate Verification Failed
+
+**Symptom:**
+```
+Error: failed to fetch image: x509: certificate signed by unknown authority
+Exit code: 2
+```
+
+**Causes:**
+- Self-signed certificate
+- Corporate proxy with custom CA
+- Missing CA certificates
+
+**Solutions:**
+
+**1. Install CA certificates (Linux):**
+```bash
+# Copy CA certificate
+sudo cp myregistry-ca.crt /usr/local/share/ca-certificates/
+sudo update-ca-certificates
+```
+
+**2. Install CA certificates (macOS):**
+```bash
+sudo security add-trusted-cert -d -r trustRoot -k /Library/Keychains/System.keychain myregistry-ca.crt
+```
+
+**3. Use Docker daemon (which may trust the certificate):**
+```bash
+docker pull myregistry.example.com/app:latest
+check-image age myregistry.example.com/app:latest
+```
+
+### Registry Rate Limiting
+
+**Symptom:**
+```
+Error: failed to fetch image: toomanyrequests: rate limit exceeded
+Exit code: 2
+```
+
+**Solutions:**
+
+**1. Authenticate to increase rate limits:**
+```bash
+# Docker Hub increases rate limits for authenticated users
+check-image age nginx:latest \
+  --username mydockerhubuser \
+  --password "$DOCKER_HUB_TOKEN"
+```
+
+**2. Use caching in CI/CD:**
+```yaml
+# GitHub Actions example
+- name: Cache Docker images
+  uses: actions/cache@v3
+  with:
+    path: /tmp/docker-images
+    key: ${{ runner.os }}-docker-${{ hashFiles('**/Dockerfile') }}
+```
+
+**3. Use a mirror registry:**
+```bash
+check-image age mirror.example.com/nginx:latest
+```
+
+## Docker Daemon Access
+
+### Cannot Connect to Docker Daemon
+
+**Symptom:**
+```
+Error: failed to get local image: Cannot connect to the Docker daemon
+Exit code: 2
+```
+
+**Causes:**
+- Docker daemon not running
+- Permission denied (user not in `docker` group)
+- Docker socket not accessible
+
+**Solutions:**
+
+**1. Check Docker daemon status:**
+```bash
+# Linux
+sudo systemctl status docker
+
+# macOS
+open -a Docker
+
+# Verify with Docker CLI
+docker ps
+```
+
+**2. Add user to docker group (Linux):**
+```bash
+sudo usermod -aG docker $USER
+# Log out and back in for changes to take effect
+```
+
+**3. Use remote registry instead:**
+```bash
+# Push to registry first
+docker push myregistry.example.com/myapp:latest
+
+# Then validate from registry (no daemon required)
+check-image age myregistry.example.com/myapp:latest
+```
+
+<Note>
+Check Image prefers remote registry access and will automatically fall back to remote if local daemon access fails. For CI/CD pipelines, using remote registries is recommended.
+</Note>
+
+### Permission Denied on Docker Socket
+
+**Symptom:**
+```
+Error: failed to get local image: permission denied while trying to connect to Docker daemon socket
+Exit code: 2
+```
+
+**Solutions:**
+
+**1. Temporary fix (not recommended for production):**
+```bash
+sudo check-image age myapp:latest
+```
+
+**2. Permanent fix:**
+```bash
+# Add user to docker group
+sudo usermod -aG docker $USER
+newgrp docker
+
+# Verify
+id -nG | grep docker
+```
+
+## Performance Considerations
+
+### Slow Validation for Large Images
+
+**Symptom:**
+Validation takes several minutes for large images (>1GB).
+
+**Causes:**
+- Downloading large layers from remote registry
+- Secrets scanning across many layers
+- Network bandwidth limitations
+
+**Solutions:**
+
+**1. Use local Docker daemon (faster than remote):**
+```bash
+# Pull image once
+docker pull large-image:latest
+
+# Subsequent checks use local daemon cache
+check-image age large-image:latest
+```
+
+**2. Skip expensive checks when not needed:**
+```bash
+# Skip file scanning for secrets (faster)
+check-image secrets nginx:latest \
+  --secrets-policy config/secrets-policy.yaml \
+  --skip-files
+```
+
+**3. Use fail-fast mode:**
+```bash
+# Stop on first failure (don't run all checks)
+check-image all large-image:latest --fail-fast --config config.yaml
+```
+
+**4. Cache images in CI/CD:**
+```yaml
+# GitLab CI example
+validate:
+  image: ghcr.io/jarfernandez/check-image:latest
+  script:
+    - check-image all $CI_REGISTRY_IMAGE:$CI_COMMIT_SHA --config config.yaml
+  cache:
+    paths:
+      - /var/lib/docker
+```
+
+### High Memory Usage
+
+**Symptom:**
+Check Image process consumes excessive memory.
+
+**Causes:**
+- Very large image (>5GB)
+- Many layers (>100)
+- Secrets file scanning across all layers
+
+**Solutions:**
+
+**1. Skip file scanning:**
+```bash
+check-image secrets large-image:latest \
+  --secrets-policy config/secrets-policy.yaml \
+  --skip-files
+```
+
+**2. Exclude large paths from secrets scanning:**
+```yaml
+# secrets-policy.yaml
+check-env-vars: true
+check-files: true
+excluded-paths:
+  - /usr/**
+  - /var/**
+  - /opt/**
+```
+
+**3. Run checks individually:**
+```bash
+# Instead of 'all', run lightweight checks only
+check-image age large-image:latest
+check-image root-user large-image:latest
+check-image healthcheck large-image:latest
+```
+
+## Log Level Adjustment
+
+Increase log verbosity to diagnose issues:
+
+### Trace Level (Most Verbose)
+
+```bash
+check-image age nginx:latest --log-level trace
+```
+
+**Shows:**
+- Detailed HTTP requests and responses
+- Image layer operations
+- Policy loading details
+- Authentication flow
+
+### Debug Level
+
+```bash
+check-image all nginx:latest --log-level debug --config config.yaml
+```
+
+**Shows:**
+- Check execution steps
+- Configuration parsing
+- Image reference resolution
+- Credential lookup
+
+### Info Level (Default)
+
+```bash
+check-image age nginx:latest --log-level info
+```
+
+**Shows:**
+- High-level operation progress
+- Warnings
+
+### Error Level (Minimal)
+
+```bash
+check-image age nginx:latest --log-level error
+```
+
+**Shows:**
+- Errors only
+
+## Common Error Messages
+
+### Missing Required Flag
+
+```
+Error: --registry-policy is required
+Exit code: 2
+```
+
+**Solution:**
+Provide the required flag:
+```bash
+check-image registry nginx:latest --registry-policy config/registry-policy.yaml
+```
+
+### Mutually Exclusive Flags
+
+```
+Error: --include and --skip are mutually exclusive
+Exit code: 2
+```
+
+**Solution:**
+Use only one flag:
+```bash
+# ✗ Wrong
+check-image all nginx:latest --include age,size --skip ports
+
+# ✓ Correct
+check-image all nginx:latest --include age,size
+```
+
+### Stdin Already Consumed
+
+```
+Error: --password-stdin cannot be used with --config -
+Exit code: 2
+```
+
+**Solution:**
+Use environment variables for authentication:
+```bash
+export CHECK_IMAGE_PASSWORD="$TOKEN"
+cat config.yaml | check-image all nginx:latest --username myuser --config -
+```
+
+### Invalid Config File
+
+```
+Error: error reading config file: file contains invalid UTF-8
+Exit code: 2
+```
+
+**Solution:**
+Ensure file is UTF-8 encoded:
+```bash
+file config.yaml  # Should show "UTF-8 Unicode text"
+iconv -f ISO-8859-1 -t UTF-8 config.yaml > config-utf8.yaml
+```
+
+## Getting Help
+
+If you encounter an issue not covered here:
+
+1. **Enable debug logging:**
+   ```bash
+   check-image all nginx:latest --log-level debug -o json > debug.json 2>&1
+   ```
+
+2. **Check the documentation:**
+   - [Commands Reference](/commands/overview)
+   - [Policy Configuration](/advanced/policies)
+   - [Exit Codes](/advanced/exit-codes)
+
+3. **Search existing issues:**
+   - [GitHub Issues](https://github.com/jarfernandez/check-image/issues)
+
+4. **Report a bug:**
+   - Include check-image version: `check-image version`
+   - Include debug logs (sanitize any sensitive information)
+   - Provide minimal reproduction steps
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Policy Configuration" icon="shield" href="/advanced/policies">
+    Learn about policy file structure and validation rules
+  </Card>
+  <Card title="Exit Codes" icon="circle-exclamation" href="/advanced/exit-codes">
+    Understand exit code behavior and precedence
+  </Card>
+</CardGroup>
